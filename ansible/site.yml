@@ -205,6 +205,8 @@
     - name: Install the latest CPython via pyenv
       ansible.builtin.shell: |
         set -e
+        mkdir -p /var/tmp/pyenv-build
+        export TMPDIR=/var/tmp/pyenv-build
         export PYENV_ROOT=/usr/local/pyenv
         export PATH="$PYENV_ROOT/bin:$PATH"
         eval "$(pyenv init -)"
@@ -277,31 +279,31 @@
 
     # ---------- SSH HARDENING (run explicitly with --tags ssh_hardening) ----------
     - name: Harden sshd_config (port 2222, keys only, no root, allow {{ primary_user }})
-      ansible.builtin.lineinfile:
-        path: /etc/ssh/sshd_config
-        regexp: "{{ item.re }}"
-        line: "{{ item.line }}"
-      loop:
-        - { re: '^#?Port\\s+',                      line: 'Port 2222' }
-        - { re: '^#?AddressFamily\\s+',             line: 'AddressFamily inet' }
-        - { re: '^#?ListenAddress\\s+',             line: 'ListenAddress 0.0.0.0' }
-        - { re: '^#?LoginGraceTime\\s+',            line: 'LoginGraceTime 30' }
-        - { re: '^#?MaxAuthTries\\s+',              line: 'MaxAuthTries 3' }
-        - { re: '^#?MaxSessions\\s+',               line: 'MaxSessions 5' }
-        - { re: '^#?PermitRootLogin\\s+',           line: 'PermitRootLogin no' }
-        - { re: '^#?AuthenticationMethods\\s+',     line: 'AuthenticationMethods publickey' }
-        - { re: '^#?AuthorizedKeysFile\\s+',        line: 'AuthorizedKeysFile .ssh/authorized_keys' }
-        - { re: '^#?PubkeyAuthentication\\s+',      line: 'PubkeyAuthentication yes' }
-        - { re: '^#?PasswordAuthentication\\s+',    line: 'PasswordAuthentication no' }
-        - { re: '^#?KbdInteractiveAuthentication\\s+', line: 'KbdInteractiveAuthentication no' }
-        - { re: '^#?ChallengeResponseAuthentication\\s+', line: 'ChallengeResponseAuthentication no' }
-        - { re: '^#?PermitEmptyPasswords\\s+',      line: 'PermitEmptyPasswords no' }
-        - { re: '^#?UsePAM\\s+',                    line: 'UsePAM no' }
-        - { re: '^#?AllowUsers\\s+',                line: 'AllowUsers {{ primary_user }}' }
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/99-hardening.conf
+        mode: "0644"
+        content: |
+          Port 2222
+          AddressFamily inet
+          ListenAddress 0.0.0.0
+          LoginGraceTime 30
+          MaxAuthTries 3
+          MaxSessions 5
+          PermitRootLogin no
+          AuthenticationMethods publickey
+          AuthorizedKeysFile .ssh/authorized_keys
+          PubkeyAuthentication yes
+          PasswordAuthentication no
+          KbdInteractiveAuthentication no
+          ChallengeResponseAuthentication no
+          PermitEmptyPasswords no
+          UsePAM no
+          AllowUsers {{ primary_user }}
+      notify: Restart SSH
       tags: [ssh_hardening]
 
-    - name: Restart SSH (only when hardening)
+  handlers:
+    - name: Restart SSH
       ansible.builtin.systemd:
         name: ssh
         state: restarted
-      tags: [ssh_hardening]
