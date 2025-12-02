@@ -1,0 +1,10 @@
+--- ansible/site.yml
++++ ansible/site.yml
+@@ -84,6 +84,7 @@
+           - jq
+           - unzip
++          - software-properties-common
+           - make
+           - libssl-dev
+           - zlib1g-dev
+ 

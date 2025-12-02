@@ -1,0 +1,273 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+# Create cowboy with sudo (passwordless), add to useful groups
+users:
+  - default
+  - name: cowboy
+    gecos: Cowboy
+    groups: [sudo, docker, wireshark]
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    shell: /bin/bash
+    lock_passwd: false
+    ssh_authorized_keys:
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDrlnb4Q4X/3pDcGERkTjGq9inUet6xBZnI3AkjeU19y/lJD6Sie6D2FZ5KhhDYhgcHM1RFOZrc6JKLZnqf54AQLcB6SHSiNWDuypyb51UzR0nV3U/AuxK2dgHf86yWIujlaUHxhR3ZnB5Po9Z/BcJKg3nOeQDR/H33MshvEFg8ExTEQQStZXvhV+1kbU0QFsD5yx2VvEjaipG8rgW+XFqQarbD096la2zZcocxPs8oyQX05bU2tKw1aFdOlhczlnxkvPSSX9j/A8lT33N/A/58ym/igY/1stlccNYENZ+8KziynsPFyHJmvpfTqhWZgKRa72Efor3X8wjvlTwFjJyqwQT7WQY2J6/U7bNh8/+IjGBnLndMYYzVSdn5rzq5y0E/dNVuYqvKImsJVHQnl2qPbWCUpePpu+unnO5p2khHQazUCQNUIjvV2E/kWk9rZuK7hog+I0Ux80hJPwAuDOtHK9jiPiUUXtj2WCD2cQoZnFVViT3TamuDyPJMLqyDUSU= mazevedo@Marcoss-MacBook-Pro.local
+
+# Option B: set plaintext passwords at first boot (cloud-init will hash them)
+# REPLACE the placeholder passwords before use.
+chpasswd:
+  list: |
+    cowboy:CHANGE_ME_COWBOY
+    root:CHANGE_ME_ROOT
+  expire: false
+
+write_files:
+  # ==== per-instance variables ====
+  - path: /etc/ranch-server/vars.env
+    permissions: "0644"
+    content: |
+      DOMAIN=evilbuffer.com
+      LE_EMAIL=psylinux@gmail.com
+      PRIMARY_USER=cowboy
+      SSH_PUBLIC_KEY=ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDrlnb4Q4X/3pDcGERkTjGq9inUet6xBZnI3AkjeU19y/lJD6Sie6D2FZ5KhhDYhgcHM1RFOZrc6JKLZnqf54AQLcB6SHSiNWDuypyb51UzR0nV3U/AuxK2dgHf86yWIujlaUHxhR3ZnB5Po9Z/BcJKg3nOeQDR/H33MshvEFg8ExTEQQStZXvhV+1kbU0QFsD5yx2VvEjaipG8rgW+XFqQarbD096la2zZcocxPs8oyQX05bU2tKw1aFdOlhczlnxkvPSSX9j/A8lT33N/A/58ym/igY/1stlccNYENZ+8KziynsPFyHJmvpfTqhWZgKRa72Efor3X8wjvlTwFjJyqwQT7WQY2J6/U7bNh8/+IjGBnLndMYYzVSdn5rzq5y0E/dNVuYqvKImsJVHQnl2qPbWCUpePpu+unnO5p2khHQazUCQNUIjvV2E/kWk9rZuK7hog+I0Ux80hJPwAuDOtHK9jiPiUUXtj2WCD2cQoZnFVViT3TamuDyPJMLqyDUSU=
+
+  # ==== local Ansible playbook ====
+  - path: /opt/ranch-server/site.yml
+    permissions: "0644"
+    content: |
+      - hosts: localhost
+        connection: local
+        gather_facts: yes
+        become: yes
+        vars_files: [/etc/ranch-server/vars.yml]
+        tasks:
+          - name: Ensure base packages (Debian)
+            apt:
+              name:
+                - cloud-init
+                - ansible
+                - python3
+                - python3-pip
+                - netcat-openbsd
+                - wireshark
+                - tshark
+                - tcpdump
+                - ntopng
+                - apache2
+                - certbot
+                - python3-certbot-apache
+                - openssh-server
+                - build-essential
+                - gcc
+                - g++
+                - mingw-w64
+                - git
+                - curl
+                - jq
+                - unzip
+                - ca-certificates
+                - apt-transport-https
+                - gnupg
+                - software-properties-common
+                - docker.io
+                - docker-compose-plugin
+                # pyenv build deps
+                - make
+                - libssl-dev
+                - zlib1g-dev
+                - libbz2-dev
+                - libreadline-dev
+                - libsqlite3-dev
+                - llvm
+                - libncursesw5-dev
+                - xz-utils
+                - tk-dev
+                - libxml2-dev
+                - libxmlsec1-dev
+                - libffi-dev
+                - liblzma-dev
+                - wireguard
+              state: present
+              update_cache: yes
+
+          - name: Enable & start core services
+            systemd:
+              name: "{{ item }}"
+              enabled: true
+              state: started
+            loop: [docker, ssh, apache2, ntopng]
+
+          # ---- Wireshark non-root capture ----
+          - name: Ensure 'wireshark' group exists
+            group: { name: wireshark, state: present }
+          - name: Add PRIMARY_USER to wireshark group
+            user: { name: "{{ PRIMARY_USER }}", groups: wireshark, append: yes }
+          - name: Allow non-root packet capture
+            command: setcap cap_net_raw,cap_net_admin+eip /usr/bin/dumpcap
+
+          # ---- Docker group access ----
+          - name: Add PRIMARY_USER to docker group
+            user: { name: "{{ PRIMARY_USER }}", groups: docker, append: yes }
+
+          # ---- SSH hardening (align with requested diff) ----
+          - name: Ensure cowboy's ~/.ssh exists
+            file:
+              path: "/home/{{ PRIMARY_USER }}/.ssh"
+              state: directory
+              owner: "{{ PRIMARY_USER }}"
+              group: "{{ PRIMARY_USER }}"
+              mode: "0700"
+
+          - name: Install cowboy's authorized key from vars
+            copy:
+              dest: "/home/{{ PRIMARY_USER }}/.ssh/authorized_keys"
+              content: "{{ SSH_PUBLIC_KEY | default('') }}\n"
+              owner: "{{ PRIMARY_USER }}"
+              group: "{{ PRIMARY_USER }}"
+              mode: "0600"
+
+          - name: Configure sshd according to policy
+            lineinfile:
+              path: /etc/ssh/sshd_config
+              regexp: "{{ item.regexp }}"
+              line: "{{ item.line }}"
+              state: present
+              create: no
+            loop:
+              # Port & network
+              - { regexp: '^#?Port\\s+',                    line: 'Port 2222' }
+              - { regexp: '^#?AddressFamily\\s+',           line: 'AddressFamily inet' }
+              - { regexp: '^#?ListenAddress\\s+',           line: 'ListenAddress 0.0.0.0' }
+              # Logging
+              - { regexp: '^#?SyslogFacility\\s+',          line: 'SyslogFacility AUTH' }
+              - { regexp: '^#?LogLevel\\s+',                line: 'LogLevel VERBOSE' }
+              # Authentication & sessions
+              - { regexp: '^#?LoginGraceTime\\s+',          line: 'LoginGraceTime 30' }
+              - { regexp: '^#?MaxAuthTries\\s+',            line: 'MaxAuthTries 3' }
+              - { regexp: '^#?MaxSessions\\s+',             line: 'MaxSessions 5' }
+              - { regexp: '^#?PermitRootLogin\\s+',         line: 'PermitRootLogin no' }
+              - { regexp: '^#?AuthenticationMethods\\s+',   line: 'AuthenticationMethods publickey' }
+              - { regexp: '^#?AuthorizedKeysFile\\s+',      line: 'AuthorizedKeysFile .ssh/authorized_keys' }
+              - { regexp: '^#?PubkeyAuthentication\\s+',    line: 'PubkeyAuthentication yes' }
+              - { regexp: '^#?PasswordAuthentication\\s+',  line: 'PasswordAuthentication no' }
+              - { regexp: '^#?KbdInteractiveAuthentication\\s+', line: 'KbdInteractiveAuthentication no' }
+              - { regexp: '^#?ChallengeResponseAuthentication\\s+', line: 'ChallengeResponseAuthentication no' }
+              - { regexp: '^#?PermitEmptyPasswords\\s+',    line: 'PermitEmptyPasswords no' }
+              - { regexp: '^#?UsePAM\\s+',                  line: 'UsePAM no' }
+              # Legacy / rhosts
+              - { regexp: '^#?HostbasedAuthentication\\s+', line: 'HostbasedAuthentication no' }
+              - { regexp: '^#?IgnoreRhosts\\s+',            line: 'IgnoreRhosts yes' }
+              - { regexp: '^#?IgnoreUserKnownHosts\\s+',    line: 'IgnoreUserKnownHosts no' }
+              # Forwarding & X11
+              - { regexp: '^#?AllowAgentForwarding\\s+',    line: 'AllowAgentForwarding yes' }
+              - { regexp: '^#?AllowTcpForwarding\\s+',      line: 'AllowTcpForwarding yes' }
+              - { regexp: '^#?GatewayPorts\\s+',            line: 'GatewayPorts no' }
+              - { regexp: '^#?X11Forwarding\\s+',           line: 'X11Forwarding no' }
+              # TTY / MOTD / lastlog
+              - { regexp: '^#?PermitTTY\\s+',               line: 'PermitTTY yes' }
+              - { regexp: '^#?PrintMotd\\s+',               line: 'PrintMotd no' }
+              - { regexp: '^#?PrintLastLog\\s+',            line: 'PrintLastLog yes' }
+              # Keepalive & DNS
+              - { regexp: '^#?ClientAliveInterval\\s+',     line: 'ClientAliveInterval 300' }
+              - { regexp: '^#?ClientAliveCountMax\\s+',     line: 'ClientAliveCountMax 2' }
+              - { regexp: '^#?TCPKeepAlive\\s+',            line: 'TCPKeepAlive yes' }
+              - { regexp: '^#?UseDNS\\s+',                  line: 'UseDNS no' }
+              # SFTP
+              - { regexp: '^#?Subsystem\\s+sftp\\s+',       line: 'Subsystem sftp /usr/lib/openssh/sftp-server' }
+              # Access control
+              - { regexp: '^#?AllowUsers\\s+',              line: 'AllowUsers cowboy' }
+
+          - name: Restart SSH to apply new settings
+            systemd: { name: ssh, state: restarted }
+
+          # ---- pyenv (system-wide) + latest Python ----
+          - name: Install pyenv to /usr/local/pyenv
+            git:
+              repo: "https://github.com/pyenv/pyenv.git"
+              dest: /usr/local/pyenv
+              version: master
+          - name: System-wide pyenv profile
+            copy:
+              dest: /etc/profile.d/pyenv.sh
+              mode: "0644"
+              content: |
+                export PYENV_ROOT=/usr/local/pyenv
+                export PATH="$PYENV_ROOT/bin:$PATH"
+                eval "$(pyenv init -)"
+          - name: Install latest stable Python via pyenv and set global
+            shell: |
+              set -e
+              export PYENV_ROOT=/usr/local/pyenv
+              export PATH="$PYENV_ROOT/bin:$PATH"
+              eval "$(pyenv init -)"
+              LATEST=$(pyenv install --list | sed 's/^[[:space:]]*//' | egrep '^[0-9]+\.[0-9]+\.[0-9]+$' | tail -1)
+              pyenv install -s "$LATEST"
+              pyenv global "$LATEST"
+              pyenv rehash
+            args: { creates: /usr/local/pyenv/version }
+
+          # ---- Apache: HTTPS-by-default (self-signed fallback) ----
+          - name: Enable SSL & useful modules
+            command: a2enmod ssl headers rewrite
+          - name: HTTP -> HTTPS redirect vhost
+            copy:
+              dest: /etc/apache2/sites-available/000-default.conf
+              content: |
+                <VirtualHost *:80>
+                  ServerName {{ DOMAIN | default('_') }}
+                  RewriteEngine On
+                  RewriteCond %{HTTPS} !=on
+                  RewriteRule ^/(.*)$ https://%{HTTP_HOST}/$1 [R=301,L]
+                </VirtualHost>
+          - name: Default SSL vhost (uses Debian snakeoil certs unless LE succeeds)
+            copy:
+              dest: /etc/apache2/sites-available/default-ssl.conf
+              content: |
+                <IfModule mod_ssl.c>
+                  <VirtualHost _default_:443>
+                    ServerName {{ DOMAIN | default('_') }}
+                    DocumentRoot /var/www/html
+                    SSLEngine on
+                    SSLCertificateFile /etc/ssl/certs/ssl-cert-snakeoil.pem
+                    SSLCertificateKeyFile /etc/ssl/private/ssl-cert-snakeoil.key
+                    <Directory /var/www/html>
+                      Require all granted
+                      Options -Indexes +FollowSymLinks
+                      AllowOverride All
+                    </Directory>
+                    Header always set Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+                  </VirtualHost>
+                </IfModule>
+          - name: Enable default-ssl
+            command: a2ensite default-ssl
+          - name: Reload Apache
+            systemd: { name: apache2, state: reloaded }
+
+          # ---- Let's Encrypt if DOMAIN + LE_EMAIL provided ----
+          - name: Obtain/enable LE cert (safe to skip if no domain)
+            shell: |
+              set -e
+              if [ -n "{{ DOMAIN }}" ] && [ -n "{{ LE_EMAIL }}" ]; then
+                certbot --apache --non-interactive --agree-tos -m "{{ LE_EMAIL }}" -d "{{ DOMAIN }}" --redirect || true
+              fi
+            args: { creates: "/etc/letsencrypt/live/{{ DOMAIN | default('none') }}/fullchain.pem" }
+
+  # stub for vars.yml (gets generated from vars.env below)
+  - path: /etc/ranch-server/vars.yml
+    permissions: "0644"
+    content: ""
+
+runcmd:
+  # Ensure cloud-init + Ansible + Python3 are present (raw Debian images)
+  - [ bash, -lc, "apt-get update -y && apt-get install -y cloud-init ansible python3 python3-pip" ]
+
+  # Convert /etc/ranch-server/vars.env -> /etc/ranch-server/vars.yml for Ansible
+  - [ bash, -lc, "python3 - <<'PY'\nfrom pathlib import Path\ns=Path('/etc/ranch-server/vars.env').read_text().splitlines()\nwith open('/etc/ranch-server/vars.yml','w') as f:\n  for l in s:\n    if l and not l.startswith('#') and '=' in l:\n      k,v=l.split('=',1); f.write(f\"{k}: \\\"{v}\\\"\\n\")\nPY" ]
+
+  # Run the local playbook
+  - [ bash, -lc, "ansible-playbook /opt/ranch-server/site.yml" ]
+
+  # Show versions in console log
+  - [ bash, -lc, "docker --version || true; docker compose version || true" ]
+  - [ bash, -lc, "source /etc/profile.d/pyenv.sh && python --version" ]

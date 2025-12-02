@@ -1,0 +1,329 @@
+---
+# =========================
+# 1) Bootstrap: ensure Python exists on the remote so Ansible can run modules
+# =========================
+- hosts: ranch
+  gather_facts: no
+  become: yes
+  tasks:
+    - name: Install Python so Ansible can work
+      raw: |
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -y
+        apt-get install -y python3 python3-apt sudo
+      changed_when: false
+
+# =========================
+# 2) Converge server to desired state
+# =========================
+- hosts: ranch
+  become: yes
+  gather_facts: yes
+  vars_files:
+    - vars.yml
+  vars:
+    docker_arch_map:
+      x86_64: amd64
+      aarch64: arm64
+      armv7l: armhf
+      armv6l: arm
+  tasks:
+    # ---------- DOCKER APT REPO (so docker-compose-plugin is available) ----------
+    - name: Install Docker repo prerequisites
+      ansible.builtin.apt:
+        update_cache: yes
+        state: present
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+
+    - name: Ensure keyrings directory exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Add Docker’s official GPG key
+      ansible.builtin.shell: |
+        set -e
+        curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        chmod a+r /etc/apt/keyrings/docker.gpg
+      args:
+        creates: /etc/apt/keyrings/docker.gpg
+
+    - name: Add Docker APT repository
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/docker.list
+        mode: "0644"
+        content: |
+          deb [arch={{ docker_arch_map[ansible_architecture]|default('amd64') }} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable
+
+    - name: Update apt cache after adding Docker repo
+      ansible.builtin.apt:
+        update_cache: yes
+
+    # ---------- PACKAGES (WireGuard + everything else; Docker from official repo) ----------
+    - name: Install packages
+      ansible.builtin.apt:
+        state: present
+        name:
+          - netcat-openbsd
+          - wireshark
+          - tshark
+          - tcpdump
+          - apache2
+          - certbot
+          - python3-certbot-apache
+          - openssh-server
+          # Docker stack from official repo
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+          # Toolchains & deps
+          - build-essential
+          - gcc
+          - g++
+          - mingw-w64
+          - git
+          - curl
+          - jq
+          - unzip
+          - software-properties-common
+          - make
+          - libssl-dev
+          - zlib1g-dev
+          - libbz2-dev
+          - libreadline-dev
+          - libsqlite3-dev
+          - llvm
+          - libncursesw5-dev
+          - xz-utils
+          - tk-dev
+          - libxml2-dev
+          - libxmlsec1-dev
+          - libffi-dev
+          - liblzma-dev
+          # WireGuard
+          - wireguard
+          - wireguard-tools
+      tags: [packages]
+
+    # Belt & suspenders in case package behavior ever changes
+    - name: Ensure docker/wireshark groups exist
+      ansible.builtin.group:
+        name: "{{ item }}"
+        state: present
+      loop: [docker, wireshark]
+      tags: [users]
+
+    # ---------- USER + KEY ----------
+    - name: Create primary user
+      ansible.builtin.user:
+        name: "{{ primary_user }}"
+        groups: "sudo,docker,wireshark"
+        append: yes
+        shell: /bin/bash
+        create_home: yes
+      tags: [users]
+
+    - name: Passwordless sudo for primary user
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/90-{{ primary_user }}"
+        content: "{{ primary_user }} ALL=(ALL) NOPASSWD:ALL\n"
+        mode: "0440"
+      tags: [users]
+
+    - name: Add your SSH public key
+      ansible.builtin.authorized_key:
+        user: "{{ primary_user }}"
+        key: "{{ ssh_pubkey }}"
+      tags: [users]
+
+    # ---------- SERVICES ----------
+    - name: Enable & start services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop: [docker, apache2, ssh]  # ntopng via Docker below
+      tags: [services]
+
+    # ---------- WIRESHARK NON-ROOT CAPTURE ----------
+    - name: Allow non-root packet capture (Wireshark)
+      ansible.builtin.command: setcap cap_net_raw,cap_net_admin+eip /usr/bin/dumpcap
+      changed_when: false
+      tags: [wireshark]
+
+    # ---------- PYENV + LATEST PYTHON ----------
+    - name: Install pyenv (system-wide)
+      ansible.builtin.git:
+        repo: "https://github.com/pyenv/pyenv.git"
+        dest: /usr/local/pyenv
+        version: master
+      tags: [pyenv]
+
+    - name: Profile for pyenv
+      ansible.builtin.copy:
+        dest: /etc/profile.d/pyenv.sh
+        mode: "0644"
+        content: |
+          export PYENV_ROOT=/usr/local/pyenv
+          export PATH="$PYENV_ROOT/bin:$PATH"
+          eval "$(pyenv init -)"
+      tags: [pyenv]
+
+    - name: Install the latest CPython via pyenv
+      ansible.builtin.shell: |
+        set -e
+        export PYENV_ROOT=/usr/local/pyenv
+        export PATH="$PYENV_ROOT/bin:$PATH"
+        eval "$(pyenv init -)"
+        LATEST=$(pyenv install --list | sed 's/^[[:space:]]*//' | egrep '^[0-9]+\.[0-9]+\.[0-9]+$' | tail -1)
+        pyenv install -s "$LATEST"
+        pyenv global "$LATEST"
+        pyenv rehash
+      args:
+        creates: /usr/local/pyenv/version
+      tags: [pyenv]
+
+    # ---------- APACHE: HTTPS DEFAULT + LE (best-effort) ----------
+    - name: Enable Apache modules
+      ansible.builtin.command: a2enmod ssl headers rewrite
+      changed_when: false
+      tags: [apache]
+
+    - name: Force HTTP -> HTTPS
+      ansible.builtin.copy:
+        dest: /etc/apache2/sites-available/000-default.conf
+        content: |
+          <VirtualHost *:80>
+            ServerName {{ domain }}
+            RewriteEngine On
+            RewriteCond %{HTTPS} !=on
+            RewriteRule ^/(.*)$ https://%{HTTP_HOST}/$1 [R=301,L]
+          </VirtualHost>
+      tags: [apache]
+
+    - name: Default SSL vhost
+      ansible.builtin.copy:
+        dest: /etc/apache2/sites-available/default-ssl.conf
+        content: |
+          <IfModule mod_ssl.c>
+            <VirtualHost _default_:443>
+              ServerName {{ domain }}
+              DocumentRoot /var/www/html
+              SSLEngine on
+              SSLCertificateFile /etc/ssl/certs/ssl-cert-snakeoil.pem
+              SSLCertificateKeyFile /etc/ssl/private/ssl-cert-snakeoil.key
+              <Directory /var/www/html>
+                Require all granted
+                Options -Indexes +FollowSymLinks
+                AllowOverride All
+              </Directory>
+              Header always set Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+            </VirtualHost>
+          </IfModule>
+      tags: [apache]
+
+    - name: Enable default-ssl
+      ansible.builtin.command: a2ensite default-ssl
+      changed_when: false
+      tags: [apache]
+
+    - name: Reload Apache
+      ansible.builtin.systemd:
+        name: apache2
+        state: reloaded
+      tags: [apache]
+
+    - name: Try Let’s Encrypt (ok if DNS not ready yet)
+      ansible.builtin.shell: |
+        set -e
+        certbot --apache --non-interactive --agree-tos \
+          -m "{{ le_email }}" -d "{{ domain }}" --redirect || true
+      args:
+        creates: "/etc/letsencrypt/live/{{ domain }}/fullchain.pem"
+      tags: [apache, lets-encrypt]
+
+    # ---------- NTOPNG VIA DOCKER COMPOSE ----------
+    - name: Create ntopng compose directory
+      ansible.builtin.file:
+        path: /opt/ntopng
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Write docker-compose.yml for ntopng (host network, packet capture)
+      ansible.builtin.copy:
+        dest: /opt/ntopng/docker-compose.yml
+        mode: "0644"
+        content: |
+          services:
+            ntopng:
+              image: ntop/ntopng:latest
+              container_name: ntopng
+              network_mode: host
+              restart: unless-stopped
+              cap_add:
+                - NET_ADMIN
+              volumes:
+                - /etc/localtime:/etc/localtime:ro
+                - /opt/ntopng/data:/var/lib/ntopng
+              environment:
+                - TZ=UTC
+          volumes:
+            ntopng-data:
+              driver: local
+
+    - name: Ensure ntopng data directory exists
+      ansible.builtin.file:
+        path: /opt/ntopng/data
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Launch ntopng container
+      ansible.builtin.shell: |
+        set -e
+        cd /opt/ntopng
+        docker compose up -d
+      args:
+        creates: /opt/ntopng/data
+      tags: [ntopng]
+
+    # ---------- SSH HARDENING (run later with --tags ssh_hardening) ----------
+    - name: Harden sshd_config (port 2222, keys only, no root, allow {{ primary_user }})
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.re }}"
+        line: "{{ item.line }}"
+      loop:
+        - { re: '^#?Port\\s+',                      line: 'Port 2222' }
+        - { re: '^#?AddressFamily\\s+',             line: 'AddressFamily inet' }
+        - { re: '^#?ListenAddress\\s+',             line: 'ListenAddress 0.0.0.0' }
+        - { re: '^#?LoginGraceTime\\s+',            line: 'LoginGraceTime 30' }
+        - { re: '^#?MaxAuthTries\\s+',              line: 'MaxAuthTries 3' }
+        - { re: '^#?MaxSessions\\s+',               line: 'MaxSessions 5' }
+        - { re: '^#?PermitRootLogin\\s+',           line: 'PermitRootLogin no' }
+        - { re: '^#?AuthenticationMethods\\s+',     line: 'AuthenticationMethods publickey' }
+        - { re: '^#?AuthorizedKeysFile\\s+',        line: 'AuthorizedKeysFile .ssh/authorized_keys' }
+        - { re: '^#?PubkeyAuthentication\\s+',      line: 'PubkeyAuthentication yes' }
+        - { re: '^#?PasswordAuthentication\\s+',    line: 'PasswordAuthentication no' }
+        - { re: '^#?KbdInteractiveAuthentication\\s+', line: 'KbdInteractiveAuthentication no' }
+        - { re: '^#?ChallengeResponseAuthentication\\s+', line: 'ChallengeResponseAuthentication no' }
+        - { re: '^#?PermitEmptyPasswords\\s+',      line: 'PermitEmptyPasswords no' }
+        - { re: '^#?UsePAM\\s+',                    line: 'UsePAM no' }
+        - { re: '^#?AllowUsers\\s+',                line: 'AllowUsers {{ primary_user }}' }
+      tags: [ssh_hardening]
+
+    - name: Restart SSH (only when hardening)
+      ansible.builtin.systemd:
+        name: ssh
+        state: restarted
+      tags: [ssh_hardening]

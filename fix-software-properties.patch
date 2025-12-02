@@ -1,0 +1,13 @@
+diff --git a/ansible/site.yml b/ansible/site.yml
+index 0000000..0000001 100644
+--- a/ansible/site.yml
++++ b/ansible/site.yml
+@@ -116,7 +116,6 @@
+           - git
+           - curl
+           - jq
+           - unzip
+-          - software-properties-common
+           - make
+           - libssl-dev
+           - zlib1g-dev

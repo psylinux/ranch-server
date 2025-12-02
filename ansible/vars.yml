@@ -1,0 +1,4 @@
+primary_user: cowboy
+ssh_pubkey: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDrlnb4Q4X/...USU="
+domain: "evilbuffer.com"
+le_email: "psylinux@gmail.com"
