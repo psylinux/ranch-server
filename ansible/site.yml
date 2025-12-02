@@ -92,7 +92,6 @@
           - curl
           - jq
           - unzip
-          - software-properties-common
           - make
           - libssl-dev
           - zlib1g-dev
