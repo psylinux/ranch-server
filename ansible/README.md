@@ -12,7 +12,7 @@ One-command provisioning of a clean Debian server with your toolbox:
 
 - Users: creates `cowboy` with passwordless sudo and your SSH public key.
 - SSH hardening (opt-in tag): port **2222**, keys only, `AllowUsers cowboy`, `MaxAuthTries 3`, no root SSH.
-- Firewall: **not** managed by the playbook—open ports 80/443/2222 in the Vultr panel.
+- Firewall: **not** managed by the playbook; open ports 80/443/2222 in the cloud provider panel.
 
 > This repo assumes:
 > - **Debian** on the remote host.
