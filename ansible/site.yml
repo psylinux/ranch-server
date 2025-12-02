@@ -28,6 +28,33 @@
       armv7l: armhf
       armv6l: arm
   tasks:
+    # ---------- HOSTNAME ----------
+    - name: Compute FQDN when domain is provided
+      ansible.builtin.set_fact:
+        _fqdn: "{{ hostname }}.{{ domain }}"
+      when:
+        - hostname is defined
+        - hostname | length > 0
+        - domain is defined
+        - domain | length > 0
+
+    - name: Set system hostname
+      ansible.builtin.hostname:
+        name: "{{ _fqdn | default(hostname) }}"
+      when:
+        - hostname is defined
+        - hostname | length > 0
+
+    - name: Ensure /etc/hosts has 127.0.1.1 mapping for hostname
+      ansible.builtin.blockinfile:
+        path: /etc/hosts
+        marker: "# {mark} ANSIBLE ranch-server hostname"
+        block: |
+          127.0.1.1 {{ (_fqdn | default(hostname)) | trim }} {{ hostname }}
+      when:
+        - hostname is defined
+        - hostname | length > 0
+
     # ---------- DOCKER APT REPO (so docker-compose-plugin is available) ----------
     - name: Install Docker repo prerequisites
       ansible.builtin.apt:
@@ -111,7 +138,7 @@
           - wireguard-tools
       tags: [packages]
 
-    # Belt & suspenders in case package behavior ever changes
+    # ---------- GROUPS ----------
     - name: Ensure docker/wireshark groups exist
       ansible.builtin.group:
         name: "{{ item }}"
@@ -148,7 +175,7 @@
         name: "{{ item }}"
         enabled: true
         state: started
-      loop: [docker, apache2, ssh]  # ntopng via Docker below
+      loop: [docker, apache2, ssh]
       tags: [services]
 
     # ---------- WIRESHARK NON-ROOT CAPTURE ----------
@@ -248,55 +275,48 @@
         creates: "/etc/letsencrypt/live/{{ domain }}/fullchain.pem"
       tags: [apache, lets-encrypt]
 
-    # ---------- NTOPNG VIA DOCKER COMPOSE ----------
-    - name: Create ntopng compose directory
-      ansible.builtin.file:
-        path: /opt/ntopng
-        state: directory
-        owner: root
-        group: root
-        mode: "0755"
+    # ---------- FIREWALL: open TCP/2222 and persist (idempotent) ----------
+    - name: Install iptables-persistent (noninteractive)
+      ansible.builtin.apt:
+        name: iptables-persistent
+        state: present
+        update_cache: yes
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      tags: [firewall]
 
-    - name: Write docker-compose.yml for ntopng (host network, packet capture)
-      ansible.builtin.copy:
-        dest: /opt/ntopng/docker-compose.yml
-        mode: "0644"
-        content: |
-          services:
-            ntopng:
-              image: ntop/ntopng:latest
-              container_name: ntopng
-              network_mode: host
-              restart: unless-stopped
-              cap_add:
-                - NET_ADMIN
-              volumes:
-                - /etc/localtime:/etc/localtime:ro
-                - /opt/ntopng/data:/var/lib/ntopng
-              environment:
-                - TZ=UTC
-          volumes:
-            ntopng-data:
-              driver: local
+    - name: Check if iptables rule for 2222 exists (IPv4)
+      ansible.builtin.command: iptables -C INPUT -p tcp --dport 2222 -m conntrack --ctstate NEW -j ACCEPT
+      register: ipt4_check_2222
+      failed_when: false
+      changed_when: false
+      tags: [firewall]
 
-    - name: Ensure ntopng data directory exists
-      ansible.builtin.file:
-        path: /opt/ntopng/data
-        state: directory
-        owner: root
-        group: root
-        mode: "0755"
+    - name: Add iptables rule for 2222 (IPv4)
+      ansible.builtin.command: iptables -I INPUT -p tcp --dport 2222 -m conntrack --ctstate NEW -j ACCEPT
+      when: ipt4_check_2222.rc != 0
+      tags: [firewall]
 
-    - name: Launch ntopng container
-      ansible.builtin.shell: |
-        set -e
-        cd /opt/ntopng
-        docker compose up -d
-      args:
-        creates: /opt/ntopng/data
-      tags: [ntopng]
+    - name: Check if ip6tables rule for 2222 exists (IPv6)
+      ansible.builtin.command: ip6tables -C INPUT -p tcp --dport 2222 -m conntrack --ctstate NEW -j ACCEPT
+      register: ipt6_check_2222
+      failed_when: false
+      changed_when: false
+      tags: [firewall]
 
-    # ---------- SSH HARDENING (run later with --tags ssh_hardening) ----------
+    - name: Add ip6tables rule for 2222 (IPv6)
+      ansible.builtin.command: ip6tables -I INPUT -p tcp --dport 2222 -m conntrack --ctstate NEW -j ACCEPT
+      when: ipt6_check_2222.rc != 0
+      tags: [firewall]
+
+    - name: Persist iptables rules
+      ansible.builtin.command: netfilter-persistent save
+      register: nft_save
+      changed_when: "'rules saved' in (nft_save.stdout | lower) or (nft_save.stderr | lower)"
+      failed_when: false
+      tags: [firewall]
+
+    # ---------- SSH HARDENING (run explicitly with --tags ssh_hardening) ----------
     - name: Harden sshd_config (port 2222, keys only, no root, allow {{ primary_user }})
       ansible.builtin.lineinfile:
         path: /etc/ssh/sshd_config

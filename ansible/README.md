@@ -1,12 +1,21 @@
-# ranch-server · Ansible Setup
+# ranch-server - Ansible Setup
 
 One-command provisioning of a clean Debian server with your toolbox:
 
-- Tools: `nc`, `wireshark` + `tshark`, `tcpdump`, **ntopng** (via Docker), `apache2` (HTTPS by default), Let’s Encrypt (best-effort), **Docker CE + Buildx + Compose v2**, `pyenv` + latest CPython, `gcc`/`g++`, `mingw-w64`, `git`, `curl`, `jq`, `unzip`, and **WireGuard**.
+**Tools installed**
+- Network: `nc`, `wireshark`, `tshark`, `tcpdump`
+- Web: `apache2` with HTTPS-by-default, Let’s Encrypt (best-effort)
+- Containers: **Docker CE** (official Docker APT repo) + Buildx + **Compose v2**
+- Python: **pyenv** + latest CPython (system-wide)
+- Build chain: `gcc`, `g++`, `mingw-w64`, `build-essential` and CPython build deps
+- VPN: **WireGuard** (`wireguard`, `wireguard-tools`)
+
 - Users: creates `cowboy` with passwordless sudo and your SSH public key.
 - SSH hardening (opt-in tag): port **2222**, keys only, `AllowUsers cowboy`, `MaxAuthTries 3`, no root SSH.
 
-> This repo assumes **Debian** on the remote host and **Ubuntu/macOS/Linux** on your laptop.
+> This repo assumes:
+> - **Debian** on the remote host.
+> - **Ubuntu/macOS/Linux** on your laptop.
 
 ---
 
@@ -17,7 +26,7 @@ One-command provisioning of a clean Debian server with your toolbox:
 ranch-server/
 ├─ ansible/
 │  ├─ inventory.ini         # where your server lives
-│  ├─ vars.yml              # your variables (user, domain, email, key)
+│  ├─ vars.yml              # your variables (user, domain, email, key). You can override ssh_pubkey at runtime.
 │  └─ site.yml              # the playbook
 ├─ cloud-init/              # (optional) original cloud-init files
 └─ README.md                # this file
@@ -60,6 +69,12 @@ domain: "evilbuffer.com"
 le_email: "you@example.com"
 ```
 
+**Tip (recommended):** On the first run, override `ssh_pubkey` with your *actual* local key without editing files:
+
+```bash
+-e "ssh_pubkey=$(cat ~/.ssh/id_ed25519.pub)"
+```
+
 * `ssh_pubkey` is your **public** key (e.g., from `~/.ssh/id_ed25519.pub`).
 * LE issuance is **best-effort** (will succeed once DNS points to your server).
 
@@ -80,12 +95,14 @@ From repo root or `ansible/`:
 cd ansible
 ansible-playbook -i inventory.ini site.yml \
   --skip-tags ssh_hardening \
+  -e "ssh_pubkey=$(cat ~/.ssh/id_ed25519.pub)" \
   -k \
   --ssh-common-args='-o StrictHostKeyChecking=accept-new'
 ```
 
 * `-k` asks for the **SSH password** (requires `sshpass` on your laptop).
 * If you already copied your key to **root**, you can omit `-k`.
+* Passing `-e "ssh_pubkey=..."` guarantees the correct key lands on `cowboy` even if `vars.yml` contains an older key.
 
 **Verify** a few things:
 
@@ -93,14 +110,12 @@ ansible-playbook -i inventory.ini site.yml \
 ansible -i inventory.ini ranch -m command -a "docker --version"
 ansible -i inventory.ini ranch -m command -a "tshark --version | head -1"
 ansible -i inventory.ini ranch -m command -a "ss -ltnp | egrep ':80|:443'"
-ansible -i inventory.ini ranch -m command -a "docker ps --format '{{.Names}} {{.Ports}}'"
+ansible -i inventory.ini ranch -m command -a "docker ps --format '{{.Names}}'"
 ```
-
-**ntopng** UI (Docker): `http://YOUR.SERVER.IP.ADDR:3000/`
 
 ---
 
-## 4) Logging in as `cowboy`
+## 4) Logging in as `cowboy` (pre-hardening)
 
 After the first run, your key is on `cowboy`:
 
@@ -109,6 +124,12 @@ ssh cowboy@YOUR.SERVER.IP.ADDR  # still on port 22 (hardening not applied yet)
 ```
 
 If that works, proceed to hardening.
+
+If it still prompts for a **password**, re-run step 3 ensuring you pass:
+
+```bash
+-e "ssh_pubkey=$(cat ~/.ssh/id_ed25519.pub)"
+```
 
 ---
 
@@ -186,19 +207,9 @@ If you want the playbook to manage full WireGuard configs, open an issue or requ
 
 ---
 
-## 9) ntopng (Docker) management
+## 9) (reserved)
 
-* Compose file: `/opt/ntopng/docker-compose.yml`
-* Data dir: `/opt/ntopng/data`
-
-Common commands:
-
-```bash
-sudo docker compose -f /opt/ntopng/docker-compose.yml ps
-sudo docker compose -f /opt/ntopng/docker-compose.yml logs -f
-sudo docker compose -f /opt/ntopng/docker-compose.yml pull
-sudo docker compose -f /opt/ntopng/docker-compose.yml up -d
-```
+(removed)
 
 ---
 
@@ -215,11 +226,8 @@ sudo ss -ltnp | grep ssh
 **“to use the 'ssh' connection type with passwords … install sshpass”**
 Install `sshpass` on your **laptop** and re-run with `-k`.
 
-**Missing APT packages (e.g., `ntopng`, `software-properties-common`)**
-
-* We run ntopng via Docker to avoid distro repo differences.
-* The playbook already removed `software-properties-common`.
-  If you hit another missing package, open an issue; we’ll patch the play.
+**Missing APT packages**
+If you hit a missing package on your image, open an issue; we’ll patch the play for your Debian release.
 
 **Let’s Encrypt fails**
 DNS isn’t pointing yet. The play keeps Apache HTTPS using snakeoil certs. Point DNS, then re-run:
@@ -237,50 +245,21 @@ apt-get update -y && apt-get install -y python3 python3-apt sudo
 
 ---
 
-## 11) Using patches (deltas)
-
-When you receive a `*.patch` file:
-
-**With Git (recommended):**
-
-```bash
-cd ~/github/ranch-server
-git apply --check updates.patch      # dry-run
-git apply --whitespace=fix updates.patch
-git add -A && git commit -m "Apply updates.patch"
-```
-
-**Without Git:**
-
-```bash
-cd ~/github/ranch-server
-patch -p1 < updates.patch
-```
-
-**Undo**:
-
-```bash
-git apply -R updates.patch
-# or with patch(1):
-patch -R -p1 < updates.patch
-```
-
----
-
-## 12) Security reminders
+## 11) Security reminders
 
 * Keep SSH key-only access; use the hardening tag asap.
-* Restrict firewall to needed ports (22 or 2222, 80/443, 3000 if you expose ntopng).
+* Restrict firewall to needed ports (22 or 2222, 80/443).
 * Prefer pinning your repo to trusted commits and review changes.
 
 ---
 
-## 13) Common commands (cheat sheet)
+## 12) Common commands (cheat sheet)
 
 ```bash
 # First-time run (password once)
 ansible-playbook -i ansible/inventory.ini ansible/site.yml \
   --skip-tags ssh_hardening -k \
+  -e "ssh_pubkey=$(cat ~/.ssh/id_ed25519.pub)" \
   --ssh-common-args='-o StrictHostKeyChecking=accept-new'
 
 # Apply SSH hardening
@@ -300,13 +279,30 @@ ansible -i ansible/inventory.ini ranch -m command -a "sshd -T | egrep 'port|maxa
 
 ---
 
-## 14) What gets installed/configured (summary)
+## 13) What gets installed/configured (summary)
 
 * **Docker CE** + Buildx + Compose v2 (official Docker APT repo)
 * **WireGuard** (`wireguard`, `wireguard-tools`)
-* Network tools: `nc`, `wireshark`, `tshark`, `tcpdump`, **ntopng (Docker)**
+* Network tools: `nc`, `wireshark`, `tshark`, `tcpdump`
 * Web: `apache2` with HTTPS-by-default, optional **Let’s Encrypt**
 * Python: **pyenv** + latest CPython (system-wide)
 * Build toolchain: `gcc`, `g++`, `mingw-w64`, `build-essential`, libs for CPython builds
 * User: **cowboy**, passwordless sudo, your `ssh_pubkey`
 * **SSH hardening** (opt-in tag): 2222, keys only, `AllowUsers cowboy`, `MaxAuthTries 3`, no root SSH
+
+````
+
+---
+
+## After applying
+
+Re-run to converge (still safe to skip hardening if not done yet):
+
+```bash
+cd ~/github/ranch-server/ansible
+ansible-playbook -i inventory.ini site.yml \
+  --skip-tags ssh_hardening \
+  -e "ssh_pubkey=$(cat ~/.ssh/id_ed25519.pub)" \
+  -k \
+  --ssh-common-args='-o StrictHostKeyChecking=accept-new'
+````
