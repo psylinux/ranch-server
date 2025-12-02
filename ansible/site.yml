@@ -277,33 +277,43 @@
         creates: "/etc/letsencrypt/live/{{ domain }}/fullchain.pem"
       tags: [apache, lets-encrypt]
 
-    # ---------- SSH HARDENING (run explicitly with --tags ssh_hardening) ----------
-    - name: Harden sshd_config (port 2222, keys only, no root, allow {{ primary_user }})
-      ansible.builtin.copy:
-        dest: /etc/ssh/sshd_config.d/99-hardening.conf
-        mode: "0644"
-        content: |
-          Port 2222
-          AddressFamily inet
-          ListenAddress 0.0.0.0
-          LoginGraceTime 30
-          MaxAuthTries 3
-          MaxSessions 5
-          PermitRootLogin no
-          AuthenticationMethods publickey
-          AuthorizedKeysFile .ssh/authorized_keys
-          PubkeyAuthentication yes
-          PasswordAuthentication no
-          KbdInteractiveAuthentication no
-          ChallengeResponseAuthentication no
-          PermitEmptyPasswords no
-          UsePAM no
-          AllowUsers {{ primary_user }}
-      notify: Restart SSH
-      tags: [ssh_hardening]
+    # ---------- FIREWALL: disable local firewall (use provider firewall instead) ----------
+    - name: Check if ufw systemd unit exists
+      ansible.builtin.stat:
+        path: /lib/systemd/system/ufw.service
+      register: ufw_unit
+      tags: [firewall]
 
-  handlers:
-    - name: Restart SSH
+    - name: Disable ufw if present
+      ansible.builtin.command: ufw disable
+      register: ufw_disable
+      changed_when: "'inactive' in (ufw_disable.stdout | lower) or 'not running' in (ufw_disable.stdout | lower) or 'disabled' in (ufw_disable.stdout | lower) or ufw_disable.rc == 0"
+      failed_when: ufw_disable.rc not in [0,1]  # ufw returns 1 when already disabled
+      when: ufw_unit.stat.exists
+      tags: [firewall]
+
+    - name: Stop/disable ufw service if present
       ansible.builtin.systemd:
-        name: ssh
-        state: restarted
+        name: ufw
+        state: stopped
+        enabled: false
+        masked: true
+      when: ufw_unit.stat.exists
+      tags: [firewall]
+
+    - name: Flush iptables/ip6tables and set ACCEPT policies (no host firewall)
+      ansible.builtin.shell: |
+        set -e
+        for tbl in filter nat mangle raw; do
+          iptables -t "$tbl" -F || true
+          iptables -t "$tbl" -X || true
+          ip6tables -t "$tbl" -F || true
+          ip6tables -t "$tbl" -X || true
+        done
+        iptables -P INPUT ACCEPT
+        iptables -P FORWARD ACCEPT
+        iptables -P OUTPUT ACCEPT
+        ip6tables -P INPUT ACCEPT
+        ip6tables -P FORWARD ACCEPT
+        ip6tables -P OUTPUT ACCEPT
+      tags: [firewall]

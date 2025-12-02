@@ -11,8 +11,8 @@ One-command provisioning of a clean Debian server with your toolbox:
 - VPN: **WireGuard** (`wireguard`, `wireguard-tools`)
 
 - Users: creates `cowboy` with passwordless sudo and your SSH public key.
-- SSH hardening (opt-in tag): port **2222**, keys only, `AllowUsers cowboy`, `MaxAuthTries 3`, no root SSH.
-- Firewall: **not** managed by the playbook; open ports 80/443/2222 in the cloud provider panel.
+- SSH runs on port **22** for `cowboy` (root only used for the first run/password).
+- Firewall: host firewall is disabled/emptied (ufw stopped + iptables/ip6tables flushed). Open ports 80/443/22 in the Vultr panel.
 
 > This repo assumes:
 > - **Debian** on the remote host.
@@ -57,8 +57,6 @@ Edit `ansible/inventory.ini` with your server’s IP and initial SSH user/port:
 YOUR.SERVER.IP.ADDR ansible_user=root ansible_port=22
 ````
 
-> After hardening, you’ll switch this to `cowboy` on port `2222` (see step 6).
-
 ### 2.2 Variables
 
 Put your values in `ansible/vars.yml`:
@@ -88,14 +86,13 @@ The first run:
 * installs Python on the remote if needed,
 * installs Docker (official repo), WireGuard, toolchains, Apache, etc.,
 * creates `cowboy` and adds your SSH key,
-* **skips SSH hardening** to avoid lockouts.
+* sets up SSH for user `cowboy` on port 22.
 
 From repo root or `ansible/`:
 
 ```bash
 cd ansible
 ansible-playbook -i inventory.ini site.yml \
-  --skip-tags ssh_hardening \
   -e "ssh_pubkey=$(cat ~/.ssh/id_ed25519.pub)" \
   -k \
   --ssh-common-args='-o StrictHostKeyChecking=accept-new'
@@ -116,50 +113,7 @@ ansible -i inventory.ini ranch -m command -a "docker ps --format '{{.Names}}'"
 
 ---
 
-## 4) Logging in as `cowboy` (pre-hardening)
-
-After the first run, your key is on `cowboy`:
-
-```bash
-ssh cowboy@YOUR.SERVER.IP.ADDR  # still on port 22 (hardening not applied yet)
-```
-
-If that works, proceed to hardening.
-
-If it still prompts for a **password**, re-run step 3 ensuring you pass:
-
-```bash
--e "ssh_pubkey=$(cat ~/.ssh/id_ed25519.pub)"
-```
-
----
-
-## 5) Apply SSH hardening (opt-in)
-
-This switches SSH to **port 2222**, keys only, no root SSH, `AllowUsers cowboy`.
-
-```bash
-ansible-playbook -i inventory.ini site.yml --tags ssh_hardening
-```
-
-Now update the inventory to reflect the new user/port:
-
-```ini
-[ranch]
-YOUR.SERVER.IP.ADDR ansible_user=cowboy ansible_port=2222
-```
-
-Reconnect:
-
-```bash
-ssh -p 2222 cowboy@YOUR.SERVER.IP.ADDR
-```
-
-> **Lockout recovery**: if you misconfigure SSH, use your provider’s web console (OOB) to edit `/etc/ssh/sshd_config` and restart `ssh`.
-
----
-
-## 6) Re-running & idempotency
+## 4) Re-running & idempotency
 
 Re-run anytime; tasks only change what’s needed:
 
@@ -181,8 +135,8 @@ Append more lines to `inventory.ini`:
 
 ```ini
 [ranch]
-IP1 ansible_user=cowboy ansible_port=2222
-IP2 ansible_user=cowboy ansible_port=2222
+IP1 ansible_user=cowboy ansible_port=22
+IP2 ansible_user=cowboy ansible_port=22
 ```
 
 Target all at once (parallelized), or a subset with `-l`:
@@ -243,7 +197,7 @@ apt-get update -y && apt-get install -y python3 python3-apt sudo
 ## 10) Security reminders
 
 * Keep SSH key-only access; use the hardening tag asap.
-* Manage network rules in the Vultr panel (playbook does **not** touch iptables/nftables). Open 80/443/2222 there as needed.
+* Manage network rules in the Vultr panel (playbook does **not** touch iptables/nftables). Open 80/443/22 there as needed.
 * Prefer pinning your repo to trusted commits and review changes.
 
 ---
@@ -253,12 +207,9 @@ apt-get update -y && apt-get install -y python3 python3-apt sudo
 ```bash
 # First-time run (password once)
 ansible-playbook -i ansible/inventory.ini ansible/site.yml \
-  --skip-tags ssh_hardening -k \
+  -k \
   -e "ssh_pubkey=$(cat ~/.ssh/id_ed25519.pub)" \
   --ssh-common-args='-o StrictHostKeyChecking=accept-new'
-
-# Apply SSH hardening
-ansible-playbook -i ansible/inventory.ini ansible/site.yml --tags ssh_hardening
 
 # Day-2 re-run
 ansible-playbook -i ansible/inventory.ini ansible/site.yml
@@ -281,7 +232,6 @@ Re-run to converge (still safe to skip hardening if not done yet):
 ```bash
 cd ~/github/ranch-server/ansible
 ansible-playbook -i inventory.ini site.yml \
-  --skip-tags ssh_hardening \
   -e "ssh_pubkey=$(cat ~/.ssh/id_ed25519.pub)" \
   -k \
   --ssh-common-args='-o StrictHostKeyChecking=accept-new'
