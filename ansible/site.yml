@@ -275,47 +275,6 @@
         creates: "/etc/letsencrypt/live/{{ domain }}/fullchain.pem"
       tags: [apache, lets-encrypt]
 
-    # ---------- FIREWALL: open TCP/2222 and persist (idempotent) ----------
-    - name: Install iptables-persistent (noninteractive)
-      ansible.builtin.apt:
-        name: iptables-persistent
-        state: present
-        update_cache: yes
-      environment:
-        DEBIAN_FRONTEND: noninteractive
-      tags: [firewall]
-
-    - name: Check if iptables rule for 2222 exists (IPv4)
-      ansible.builtin.command: iptables -C INPUT -p tcp --dport 2222 -m conntrack --ctstate NEW -j ACCEPT
-      register: ipt4_check_2222
-      failed_when: false
-      changed_when: false
-      tags: [firewall]
-
-    - name: Add iptables rule for 2222 (IPv4)
-      ansible.builtin.command: iptables -I INPUT -p tcp --dport 2222 -m conntrack --ctstate NEW -j ACCEPT
-      when: ipt4_check_2222.rc != 0
-      tags: [firewall]
-
-    - name: Check if ip6tables rule for 2222 exists (IPv6)
-      ansible.builtin.command: ip6tables -C INPUT -p tcp --dport 2222 -m conntrack --ctstate NEW -j ACCEPT
-      register: ipt6_check_2222
-      failed_when: false
-      changed_when: false
-      tags: [firewall]
-
-    - name: Add ip6tables rule for 2222 (IPv6)
-      ansible.builtin.command: ip6tables -I INPUT -p tcp --dport 2222 -m conntrack --ctstate NEW -j ACCEPT
-      when: ipt6_check_2222.rc != 0
-      tags: [firewall]
-
-    - name: Persist iptables rules
-      ansible.builtin.command: netfilter-persistent save
-      register: nft_save
-      changed_when: "'rules saved' in (nft_save.stdout | lower) or (nft_save.stderr | lower)"
-      failed_when: false
-      tags: [firewall]
-
     # ---------- SSH HARDENING (run explicitly with --tags ssh_hardening) ----------
     - name: Harden sshd_config (port 2222, keys only, no root, allow {{ primary_user }})
       ansible.builtin.lineinfile:

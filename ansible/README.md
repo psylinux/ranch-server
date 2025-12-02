@@ -12,6 +12,7 @@ One-command provisioning of a clean Debian server with your toolbox:
 
 - Users: creates `cowboy` with passwordless sudo and your SSH public key.
 - SSH hardening (opt-in tag): port **2222**, keys only, `AllowUsers cowboy`, `MaxAuthTries 3`, no root SSH.
+- Firewall: **not** managed by the playbook—open ports 80/443/2222 in the Vultr panel.
 
 > This repo assumes:
 > - **Debian** on the remote host.
@@ -26,7 +27,7 @@ One-command provisioning of a clean Debian server with your toolbox:
 ranch-server/
 ├─ ansible/
 │  ├─ inventory.ini         # where your server lives
-│  ├─ vars.yml              # your variables (user, domain, email, key). You can override ssh_pubkey at runtime.
+│  ├─ vars.yml              # your variables (user, domain, email, key).
 │  └─ site.yml              # the playbook
 ├─ cloud-init/              # (optional) original cloud-init files
 └─ README.md                # this file
@@ -207,16 +208,10 @@ If you want the playbook to manage full WireGuard configs, open an issue or requ
 
 ---
 
-## 9) (reserved)
-
-(removed)
-
----
-
-## 10) Troubleshooting
+## 9) Troubleshooting
 
 **Ansible can’t connect (port 22 refused)**
-SSH might be listening on another port or blocked by firewall. Use provider console:
+SSH might be listening on another port or blocked by your provider-level firewall. Use the provider console (or disable rules in Vultr’s panel) and check:
 
 ```bash
 sudo systemctl status ssh
@@ -245,15 +240,15 @@ apt-get update -y && apt-get install -y python3 python3-apt sudo
 
 ---
 
-## 11) Security reminders
+## 10) Security reminders
 
 * Keep SSH key-only access; use the hardening tag asap.
-* Restrict firewall to needed ports (22 or 2222, 80/443).
+* Manage network rules in the Vultr panel (playbook does **not** touch iptables/nftables). Open 80/443/2222 there as needed.
 * Prefer pinning your repo to trusted commits and review changes.
 
 ---
 
-## 12) Common commands (cheat sheet)
+## 11) Common commands (cheat sheet)
 
 ```bash
 # First-time run (password once)
@@ -276,21 +271,6 @@ ansible -i ansible/inventory.ini ranch -m ping
 ansible -i ansible/inventory.ini ranch -m command -a "docker --version"
 ansible -i ansible/inventory.ini ranch -m command -a "sshd -T | egrep 'port|maxauthtries|permitrootlogin|passwordauthentication|allowusers'"
 ```
-
----
-
-## 13) What gets installed/configured (summary)
-
-* **Docker CE** + Buildx + Compose v2 (official Docker APT repo)
-* **WireGuard** (`wireguard`, `wireguard-tools`)
-* Network tools: `nc`, `wireshark`, `tshark`, `tcpdump`
-* Web: `apache2` with HTTPS-by-default, optional **Let’s Encrypt**
-* Python: **pyenv** + latest CPython (system-wide)
-* Build toolchain: `gcc`, `g++`, `mingw-w64`, `build-essential`, libs for CPython builds
-* User: **cowboy**, passwordless sudo, your `ssh_pubkey`
-* **SSH hardening** (opt-in tag): 2222, keys only, `AllowUsers cowboy`, `MaxAuthTries 3`, no root SSH
-
-````
 
 ---
 
