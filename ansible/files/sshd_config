@@ -24,10 +24,6 @@ Port 2222
 #ListenAddress 0.0.0.0
 #ListenAddress ::
 
-#HostKey /etc/ssh/ssh_host_rsa_key
-#HostKey /etc/ssh/ssh_host_ecdsa_key
-#HostKey /etc/ssh/ssh_host_ed25519_key
-
 # Ciphers and keying
 #RekeyLimit default none
 
@@ -59,7 +55,7 @@ AuthorizedKeysFile .ssh/authorized_keys
 # HostbasedAuthentication
 #IgnoreUserKnownHosts no
 # Don't read the user's ~/.rhosts and ~/.shosts files
-#IgnoreRhosts yes
+IgnoreRhosts yes
 
 # To disable tunneled clear text passwords, change to no here!
 PasswordAuthentication no 
@@ -121,13 +117,3 @@ AcceptEnv LANG LC_*
 
 # override default of no subsystems
 Subsystem	sftp	/usr/lib/openssh/sftp-server
-
-# Restrict User
-AllowUsers cowboy
-
-# Example of overriding settings on a per-user basis
-#Match User anoncvs
-#	X11Forwarding no
-#	AllowTcpForwarding no
-#	PermitTTY no
-#	ForceCommand cvs server
