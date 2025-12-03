@@ -11,7 +11,7 @@ One-command provisioning of a clean Debian server with your toolbox:
 - VPN: **WireGuard** (`wireguard`, `wireguard-tools`)
 
 - Users: creates `cowboy` with passwordless sudo and your SSH public key.
-- SSH runs on port **22** for `cowboy` (root only used for the first run/password).
+- SSH runs on port **22** (root used for the first run/password; user switches to `cowboy` after).
 - Firewall: host firewall is disabled/emptied (ufw stopped + iptables/ip6tables flushed). Open ports 80/443/22 in the Vultr panel.
 
 > This repo assumes:
@@ -54,9 +54,9 @@ Edit `ansible/inventory.ini` with your server’s IP and initial SSH user/port:
 
 ```ini
 [ranch]
-YOUR.SERVER.IP.ADDR ansible_user=cowboy ansible_port=22
+YOUR.SERVER.IP.ADDR ansible_user=root ansible_port=22
 ````
-> If this is a brand-new host and only `root` works initially, set `ansible_user=root` and use `-k` once. After the first run, switch back to `cowboy` on port 22.
+> Use `root`/22 for the first run (`-k`), then switch inventory to `cowboy` on port 22 after your key is installed.
 
 ### 2.2 Variables
 
@@ -87,13 +87,15 @@ The first run:
 * installs Python on the remote if needed,
 * installs Docker (official repo), WireGuard, toolchains, Apache, etc.,
 * creates `cowboy` and adds your SSH key,
-* sets up SSH for user `cowboy` on port 22.
+* sets up SSH with your key (root SSH disabled after install).
 
 From repo root or `ansible/`:
 
 ```bash
 cd ansible
 ansible-playbook -i inventory.ini site.yml \
+  -k \
+  -e ssh_pubkey_path=~/.ssh/id_ed25519.pub \
   --ssh-common-args='-o StrictHostKeyChecking=accept-new'
 ```
 

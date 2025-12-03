@@ -1,0 +1,64 @@
+Include /etc/ssh/sshd_config.d/*.conf
+
+# Network
+Port 2222
+AddressFamily inet
+ListenAddress 0.0.0.0
+
+# HostKeys (system defaults)
+#HostKey /etc/ssh/ssh_host_rsa_key
+#HostKey /etc/ssh/ssh_host_ecdsa_key
+#HostKey /etc/ssh/ssh_host_ed25519_key
+
+# Logging
+SyslogFacility AUTH
+LogLevel VERBOSE
+
+# Timeouts and limits
+LoginGraceTime 30
+MaxAuthTries 3
+MaxSessions 5
+
+# Root login disabled
+PermitRootLogin no
+
+# Public key only
+PubkeyAuthentication yes
+AuthenticationMethods publickey
+AuthorizedKeysFile .ssh/authorized_keys
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+ChallengeResponseAuthentication no
+PermitEmptyPasswords no
+UsePAM no
+
+# Legacy off
+HostbasedAuthentication no
+IgnoreRhosts yes
+IgnoreUserKnownHosts no
+
+# Forwarding
+AllowAgentForwarding yes
+AllowTcpForwarding yes
+GatewayPorts no
+X11Forwarding no
+
+# TTY / MOTD
+PermitTTY yes
+PrintMotd no
+PrintLastLog yes
+
+# Keepalive
+ClientAliveInterval 300
+ClientAliveCountMax 2
+TCPKeepAlive yes
+
+# DNS reverse lookup off
+UseDNS no
+
+# SFTP subsystem
+Subsystem sftp /usr/lib/openssh/sftp-server
+
+# Restrict user
+AllowUsers cowboy
+AcceptEnv LANG LC_*

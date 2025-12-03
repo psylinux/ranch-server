@@ -2,7 +2,7 @@
 # =========================
 # 1) Bootstrap: ensure Python exists on the remote so Ansible can run modules
 # =========================
-- hosts: ranch-server
+- hosts: ranch
   gather_facts: no
   become: yes
   tasks:
@@ -16,7 +16,7 @@
 # =========================
 # 2) Converge server to desired state
 # =========================
-- hosts: ranch-server
+- hosts: ranch
   become: yes
   gather_facts: yes
   vars_files:
@@ -54,7 +54,7 @@
     - name: Ensure /etc/hosts has 127.0.1.1 mapping for hostname
       ansible.builtin.blockinfile:
         path: /etc/hosts
-        marker: "# {mark} ANSIBLE ranch-server hostname"
+        marker: "# {mark} ANSIBLE ranch-servers hostname"
         block: |
           127.0.1.1 {{ (_fqdn | default(hostname)) | trim }} {{ hostname }}
       when:
@@ -323,6 +323,42 @@
       register: ufw_unit
       tags: [firewall]
 
+    # ---------- SHELL PROFILE ----------
+    - name: Deploy .bashrc for root
+      ansible.builtin.copy:
+        src: files/.bashrc
+        dest: /root/.bashrc
+        owner: root
+        group: root
+        mode: "0644"
+      tags: [shell]
+
+    - name: Deploy .bashrc for {{ primary_user }}
+      ansible.builtin.copy:
+        src: files/.bashrc
+        dest: "/home/{{ primary_user }}/.bashrc"
+        owner: "{{ primary_user }}"
+        group: "{{ primary_user }}"
+        mode: "0644"
+      tags: [shell]
+
+    # ---------- SSHD CONFIG ----------
+    - name: Deploy sshd_config
+      ansible.builtin.copy:
+        src: files/sshd_config
+        dest: /etc/ssh/sshd_config
+        owner: root
+        group: root
+        mode: "0644"
+        backup: yes
+      notify: Restart SSH
+      tags: [ssh]
+
+  handlers:
+    - name: Restart SSH
+      ansible.builtin.systemd:
+        name: ssh
+        state: restarted
     - name: Disable ufw if present
       ansible.builtin.command: ufw disable
       register: ufw_disable
