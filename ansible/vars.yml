@@ -1,5 +1,5 @@
 primary_user: cowboy
 domain: "evilbuffer.com"
-hostname: "ranch"
+hostname: "ranch-server"
 le_email: "psylinux@gmail.com"
 ssh_pubkey: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDrlnb4Q4X/3pDcGERkTjGq9inUet6xBZnI3AkjeU19y/lJD6Sie6D2FZ5KhhDYhgcHM1RFOZrc6JKLZnqf54AQLcB6SHSiNWDuypyb51UzR0nV3U/AuxK2dgHf86yWIujlaUHxhR3ZnB5Po9Z/BcJKg3nOeQDR/H33MshvEFg8ExTEQQStZXvhV+1kbU0QFsD5yx2VvEjaipG8rgW+XFqQarbD096la2zZcocxPs8oyQX05bU2tKw1aFdOlhczlnxkvPSSX9j/A8lT33N/A/58ym/igY/1stlccNYENZ+8KziynsPFyHJmvpfTqhWZgKRa72Efor3X8wjvlTwFjJyqwQT7WQY2J6/U7bNh8/+IjGBnLndMYYzVSdn5rzq5y0E/dNVuYqvKImsJVHQnl2qPbWCUpePpu+unnO5p2khHQazUCQNUIjvV2E/kWk9rZuK7hog+I0Ux80hJPwAuDOtHK9jiPiUUXtj2WCD2cQoZnFVViT3TamuDyPJMLqyDUSU= mazevedo@Marcoss-MacBook-Pro.local"

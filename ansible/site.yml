@@ -2,7 +2,7 @@
 # =========================
 # 1) Bootstrap: ensure Python exists on the remote so Ansible can run modules
 # =========================
-- hosts: ranch
+- hosts: ranch-server
   gather_facts: no
   become: yes
   tasks:
@@ -16,7 +16,7 @@
 # =========================
 # 2) Converge server to desired state
 # =========================
-- hosts: ranch
+- hosts: ranch-server
   become: yes
   gather_facts: yes
   vars_files:

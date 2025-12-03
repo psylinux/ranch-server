@@ -93,8 +93,6 @@ From repo root or `ansible/`:
 ```bash
 cd ansible
 ansible-playbook -i inventory.ini site.yml \
-  -e ssh_pubkey_path=~/.ssh/id_ed25519.pub \
-  -k \
   --ssh-common-args='-o StrictHostKeyChecking=accept-new'
 ```
 
