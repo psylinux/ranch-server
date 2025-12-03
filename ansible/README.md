@@ -71,7 +71,7 @@ le_email: "you@example.com"
 **Tip (recommended):** On the first run, override `ssh_pubkey` with your *actual* local key without editing files:
 
 ```bash
--e "ssh_pubkey=$(cat ~/.ssh/id_ed25519.pub)"
+-e ssh_pubkey_path=~/.ssh/id_ed25519.pub
 ```
 
 * `ssh_pubkey` is your **public** key (e.g., from `~/.ssh/id_ed25519.pub`).
@@ -93,14 +93,14 @@ From repo root or `ansible/`:
 ```bash
 cd ansible
 ansible-playbook -i inventory.ini site.yml \
-  -e "ssh_pubkey=$(cat ~/.ssh/id_ed25519.pub)" \
+  -e ssh_pubkey_path=~/.ssh/id_ed25519.pub \
   -k \
   --ssh-common-args='-o StrictHostKeyChecking=accept-new'
 ```
 
 * `-k` asks for the **SSH password** (requires `sshpass` on your laptop).
 * If you already copied your key to **root**, you can omit `-k`.
-* Passing `-e "ssh_pubkey=..."` guarantees the correct key lands on `cowboy` even if `vars.yml` contains an older key.
+* Passing `-e ssh_pubkey_path=...` guarantees the correct key lands on `cowboy` even if `vars.yml` contains an older key.
 
 **Verify** a few things:
 
@@ -110,6 +110,9 @@ ansible -i inventory.ini ranch -m command -a "tshark --version | head -1"
 ansible -i inventory.ini ranch -m command -a "ss -ltnp | egrep ':80|:443'"
 ansible -i inventory.ini ranch -m command -a "docker ps --format '{{.Names}}'"
 ```
+
+Tip: you can also pass the key inline (careful with shell quoting):
+`-e "ssh_pubkey=$(cat ~/.ssh/id_ed25519.pub)"`, but `ssh_pubkey_path` is safer.
 
 ---
 
@@ -196,7 +199,7 @@ apt-get update -y && apt-get install -y python3 python3-apt sudo
 
 ## 10) Security reminders
 
-* Keep SSH key-only access; use the hardening tag asap.
+* Keep SSH key-only access.
 * Manage network rules in the Vultr panel (playbook does **not** touch iptables/nftables). Open 80/443/22 there as needed.
 * Prefer pinning your repo to trusted commits and review changes.
 
@@ -208,7 +211,7 @@ apt-get update -y && apt-get install -y python3 python3-apt sudo
 # First-time run (password once)
 ansible-playbook -i ansible/inventory.ini ansible/site.yml \
   -k \
-  -e "ssh_pubkey=$(cat ~/.ssh/id_ed25519.pub)" \
+  -e ssh_pubkey_path=~/.ssh/id_ed25519.pub \
   --ssh-common-args='-o StrictHostKeyChecking=accept-new'
 
 # Day-2 re-run
@@ -227,12 +230,12 @@ ansible -i ansible/inventory.ini ranch -m command -a "sshd -T | egrep 'port|maxa
 
 ## After applying
 
-Re-run to converge (still safe to skip hardening if not done yet):
+Re-run to converge:
 
 ```bash
 cd ~/github/ranch-server/ansible
 ansible-playbook -i inventory.ini site.yml \
-  -e "ssh_pubkey=$(cat ~/.ssh/id_ed25519.pub)" \
+  -e ssh_pubkey_path=~/.ssh/id_ed25519.pub \
   -k \
   --ssh-common-args='-o StrictHostKeyChecking=accept-new'
 ````

@@ -28,6 +28,12 @@
       armv7l: armhf
       armv6l: arm
   tasks:
+    - name: Remove any stale Docker repo file (previous runs)
+      ansible.builtin.file:
+        path: /etc/apt/sources.list.d/docker.list
+        state: absent
+      tags: [packages]
+
     # ---------- HOSTNAME ----------
     - name: Compute FQDN when domain is provided
       ansible.builtin.set_fact:
@@ -66,6 +72,10 @@
           - gnupg
           - lsb-release
 
+    - name: Compute Docker repo base (debian/ubuntu)
+      ansible.builtin.set_fact:
+        docker_repo_base: "{{ 'ubuntu' if ansible_distribution == 'Ubuntu' else 'debian' }}"
+
     - name: Ensure keyrings directory exists
       ansible.builtin.file:
         path: /etc/apt/keyrings
@@ -85,7 +95,7 @@
         dest: /etc/apt/sources.list.d/docker.list
         mode: "0644"
         content: |
-          deb [arch={{ docker_arch_map[ansible_architecture]|default('amd64') }} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable
+          deb [arch={{ docker_arch_map[ansible_architecture]|default('amd64') }} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/{{ docker_repo_base }} {{ ansible_distribution_release }} stable
 
     - name: Update apt cache after adding Docker repo
       ansible.builtin.apt:
@@ -156,6 +166,35 @@
         create_home: yes
       tags: [users]
 
+    - name: Load SSH public key (direct string or from path)
+      ansible.builtin.set_fact:
+        _raw_ssh_pubkey: >-
+          {% if ssh_pubkey_path is defined and ssh_pubkey_path|length > 0 %}
+          {{ lookup('file', ssh_pubkey_path) }}
+          {% else %}
+          {{ ssh_pubkey | default('') }}
+          {% endif %}
+      tags: [users]
+
+    - name: Validate provided SSH public key
+      ansible.builtin.assert:
+        that:
+          - _raw_ssh_pubkey | trim | length > 0
+        fail_msg: "ssh_pubkey is empty or not set; pass -e \"ssh_pubkey=$(cat ~/.ssh/id_rsa.pub)\" or -e ssh_pubkey_path=/path/to/key.pub"
+      tags: [users]
+
+    - name: Normalize SSH public key to first line
+      ansible.builtin.set_fact:
+        _ssh_pubkey_line: "{{ _raw_ssh_pubkey.splitlines()[0] | trim }}"
+      tags: [users]
+
+    - name: Validate SSH public key format (type + key at minimum)
+      ansible.builtin.assert:
+        that:
+          - _ssh_pubkey_line.split() | length >= 2
+        fail_msg: "ssh_pubkey looks malformed; starts with '{{ _ssh_pubkey_line | truncate(80, True, '...') }}'. Pass -e ssh_pubkey_path=/path/to/key.pub to avoid shell quoting issues."
+      tags: [users]
+
     - name: Passwordless sudo for primary user
       ansible.builtin.copy:
         dest: "/etc/sudoers.d/90-{{ primary_user }}"
@@ -166,7 +205,7 @@
     - name: Add your SSH public key
       ansible.builtin.authorized_key:
         user: "{{ primary_user }}"
-        key: "{{ ssh_pubkey }}"
+        key: "{{ _ssh_pubkey_line }}"
       tags: [users]
 
     # ---------- SERVICES ----------
