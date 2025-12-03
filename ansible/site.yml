@@ -34,32 +34,78 @@
         state: absent
       tags: [packages]
 
+    # ---------- FIREWALL: disable host firewall early (use provider firewall) ----------
+    - name: Check if ufw systemd unit exists
+      ansible.builtin.stat:
+        path: /lib/systemd/system/ufw.service
+      register: ufw_unit
+      tags: [firewall]
+
+    - name: Disable ufw if present
+      ansible.builtin.command: ufw disable
+      register: ufw_disable
+      changed_when: "'inactive' in (ufw_disable.stdout | lower) or 'not running' in (ufw_disable.stdout | lower) or 'disabled' in (ufw_disable.stdout | lower) or ufw_disable.rc == 0"
+      failed_when: ufw_disable.rc not in [0,1]  # ufw returns 1 when already disabled
+      when: ufw_unit.stat.exists
+      tags: [firewall]
+
+    - name: Stop/disable ufw service if present
+      ansible.builtin.systemd:
+        name: ufw
+        state: stopped
+        enabled: false
+        masked: true
+      when: ufw_unit.stat.exists
+      tags: [firewall]
+
+    - name: Flush iptables/ip6tables and set ACCEPT policies (no host firewall)
+      ansible.builtin.shell: |
+        set -e
+        for tbl in filter nat mangle raw; do
+          iptables -t "$tbl" -F || true
+          iptables -t "$tbl" -X || true
+          ip6tables -t "$tbl" -F || true
+          ip6tables -t "$tbl" -X || true
+        done
+        iptables -P INPUT ACCEPT
+        iptables -P FORWARD ACCEPT
+        iptables -P OUTPUT ACCEPT
+        ip6tables -P INPUT ACCEPT
+        ip6tables -P FORWARD ACCEPT
+        ip6tables -P OUTPUT ACCEPT
+      tags: [firewall]
+
     # ---------- HOSTNAME ----------
+    - name: Derive host/domain values (inventory overrides vars.yml)
+      ansible.builtin.set_fact:
+        _hostname: "{{ hostvars[inventory_hostname].hostname | default(hostname, true) | default(ansible_hostname, true) | default('') }}"
+        _domain: "{{ hostvars[inventory_hostname].domain | default(domain, true) | default('') }}"
+
+    - name: Compute vhost ServerName fallback
+      ansible.builtin.set_fact:
+        _vhost_name: "{{ (_hostname and _domain) | ternary(_hostname ~ '.' ~ _domain, (_hostname or _domain or ansible_hostname or inventory_hostname or 'localhost')) }}"
+
     - name: Compute FQDN when domain is provided
       ansible.builtin.set_fact:
-        _fqdn: "{{ hostname }}.{{ domain }}"
+        _fqdn: "{{ _hostname }}.{{ _domain }}"
       when:
-        - hostname is defined
-        - hostname | length > 0
-        - domain is defined
-        - domain | length > 0
+        - _hostname | length > 0
+        - _domain | length > 0
 
     - name: Set system hostname
       ansible.builtin.hostname:
-        name: "{{ _fqdn | default(hostname) }}"
+        name: "{{ _fqdn | default(_hostname) }}"
       when:
-        - hostname is defined
-        - hostname | length > 0
+        - _hostname | length > 0
 
     - name: Ensure /etc/hosts has 127.0.1.1 mapping for hostname
       ansible.builtin.blockinfile:
         path: /etc/hosts
         marker: "# {mark} ANSIBLE ranch-servers hostname"
         block: |
-          127.0.1.1 {{ (_fqdn | default(hostname)) | trim }} {{ hostname }}
+          127.0.1.1 {{ (_fqdn | default(_hostname)) | trim }} {{ _hostname }}
       when:
-        - hostname is defined
-        - hostname | length > 0
+        - _hostname | length > 0
 
     # ---------- DOCKER APT REPO (so docker-compose-plugin is available) ----------
     - name: Install Docker repo prerequisites
@@ -164,6 +210,7 @@
         append: yes
         shell: /bin/bash
         create_home: yes
+        password_lock: no
       tags: [users]
 
     - name: Load SSH public key (direct string or from path)
@@ -214,7 +261,7 @@
         name: "{{ item }}"
         enabled: true
         state: started
-      loop: [docker, apache2, ssh]
+      loop: [docker, ssh]
       tags: [services]
 
     # ---------- WIRESHARK NON-ROOT CAPTURE ----------
@@ -258,6 +305,28 @@
       tags: [pyenv]
 
     # ---------- APACHE: HTTPS DEFAULT + LE (best-effort) ----------
+    - name: Compute vhost hostname/domain (Apache)
+      ansible.builtin.set_fact:
+        _hostname: "{{ hostvars[inventory_hostname].hostname | default(hostname | default(ansible_hostname | default(inventory_hostname, true), true), true) | default('') }}"
+        _domain: "{{ hostvars[inventory_hostname].domain | default(domain | default(''), true) | default('') }}"
+      tags: [apache, lets-encrypt]
+
+    - name: Compute vhost ServerName (Apache)
+      ansible.builtin.set_fact:
+        _vhost_name: >-
+          {% if _domain | length > 0 -%}
+          {{ _domain }}
+          {%- elif _hostname | length > 0 -%}
+          {{ _hostname }}
+          {%- elif ansible_hostname is defined and (ansible_hostname | length > 0) -%}
+          {{ ansible_hostname }}
+          {%- elif inventory_hostname is defined and (inventory_hostname | length > 0) -%}
+          {{ inventory_hostname }}
+          {%- else -%}
+          localhost
+          {%- endif %}
+      tags: [apache, lets-encrypt]
+
     - name: Enable Apache modules
       ansible.builtin.command: a2enmod ssl headers rewrite
       changed_when: false
@@ -268,11 +337,17 @@
         dest: /etc/apache2/sites-available/000-default.conf
         content: |
           <VirtualHost *:80>
-            ServerName {{ domain }}
+            ServerName {{ _vhost_name }}
             RewriteEngine On
             RewriteCond %{HTTPS} !=on
             RewriteRule ^/(.*)$ https://%{HTTP_HOST}/$1 [R=301,L]
           </VirtualHost>
+      tags: [apache]
+
+    - name: Default SSL vhost
+      ansible.builtin.stat:
+        path: "/etc/letsencrypt/live/{{ _vhost_name }}/fullchain.pem"
+      register: le_cert
       tags: [apache]
 
     - name: Default SSL vhost
@@ -281,11 +356,11 @@
         content: |
           <IfModule mod_ssl.c>
             <VirtualHost _default_:443>
-              ServerName {{ domain }}
+              ServerName {{ _vhost_name }}
               DocumentRoot /var/www/html
               SSLEngine on
-              SSLCertificateFile /etc/ssl/certs/ssl-cert-snakeoil.pem
-              SSLCertificateKeyFile /etc/ssl/private/ssl-cert-snakeoil.key
+              SSLCertificateFile {{ le_cert.stat.exists | ternary('/etc/letsencrypt/live/' ~ _vhost_name ~ '/fullchain.pem', '/etc/ssl/certs/ssl-cert-snakeoil.pem') }}
+              SSLCertificateKeyFile {{ le_cert.stat.exists | ternary('/etc/letsencrypt/live/' ~ _vhost_name ~ '/privkey.pem', '/etc/ssl/private/ssl-cert-snakeoil.key') }}
               <Directory /var/www/html>
                 Require all granted
                 Options -Indexes +FollowSymLinks
@@ -311,10 +386,17 @@
       ansible.builtin.shell: |
         set -e
         certbot --apache --non-interactive --agree-tos \
-          -m "{{ le_email }}" -d "{{ domain }}" --redirect || true
+          -m "{{ le_email }}" -d "{{ _vhost_name }}" --redirect || true
       args:
-        creates: "/etc/letsencrypt/live/{{ domain }}/fullchain.pem"
+        creates: "/etc/letsencrypt/live/{{ _vhost_name }}/fullchain.pem"
       tags: [apache, lets-encrypt]
+
+    - name: Ensure Apache enabled and started
+      ansible.builtin.systemd:
+        name: apache2
+        enabled: true
+        state: started
+      tags: [apache, services]
 
     # ---------- FIREWALL: disable local firewall (use provider firewall instead) ----------
     - name: Check if ufw systemd unit exists
@@ -351,7 +433,10 @@
         group: root
         mode: "0644"
         backup: yes
-      notify: Restart SSH
+      notify:
+        - Restart SSH
+        - Daemon reload
+        - Restart SSH socket (Ubuntu only)
       tags: [ssh]
 
   handlers:
@@ -359,36 +444,11 @@
       ansible.builtin.systemd:
         name: ssh
         state: restarted
-    - name: Disable ufw if present
-      ansible.builtin.command: ufw disable
-      register: ufw_disable
-      changed_when: "'inactive' in (ufw_disable.stdout | lower) or 'not running' in (ufw_disable.stdout | lower) or 'disabled' in (ufw_disable.stdout | lower) or ufw_disable.rc == 0"
-      failed_when: ufw_disable.rc not in [0,1]  # ufw returns 1 when already disabled
-      when: ufw_unit.stat.exists
-      tags: [firewall]
-
-    - name: Stop/disable ufw service if present
+    - name: Daemon reload
       ansible.builtin.systemd:
-        name: ufw
-        state: stopped
-        enabled: false
-        masked: true
-      when: ufw_unit.stat.exists
-      tags: [firewall]
-
-    - name: Flush iptables/ip6tables and set ACCEPT policies (no host firewall)
-      ansible.builtin.shell: |
-        set -e
-        for tbl in filter nat mangle raw; do
-          iptables -t "$tbl" -F || true
-          iptables -t "$tbl" -X || true
-          ip6tables -t "$tbl" -F || true
-          ip6tables -t "$tbl" -X || true
-        done
-        iptables -P INPUT ACCEPT
-        iptables -P FORWARD ACCEPT
-        iptables -P OUTPUT ACCEPT
-        ip6tables -P INPUT ACCEPT
-        ip6tables -P FORWARD ACCEPT
-        ip6tables -P OUTPUT ACCEPT
-      tags: [firewall]
+        daemon_reload: yes
+    - name: Restart SSH socket (Ubuntu only)
+      ansible.builtin.systemd:
+        name: ssh.socket
+        state: restarted
+      when: ansible_os_family == "Debian" and ansible_distribution == "Ubuntu"

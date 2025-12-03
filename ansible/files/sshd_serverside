@@ -1,7 +1,9 @@
+root@ranch-server:~# cat /etc/ssh/sshd_config
+
 # This is the sshd server system-wide configuration file.  See
 # sshd_config(5) for more information.
 
-# This sshd was compiled with PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games
+# This sshd was compiled with PATH=/usr/local/bin:/usr/bin:/bin:/usr/games
 
 # The strategy used for options in the default sshd_config shipped with
 # OpenSSH is to specify options with their default value where
@@ -10,16 +12,7 @@
 
 Include /etc/ssh/sshd_config.d/*.conf
 
-# When systemd socket activation is used (the default), the socket
-# configuration must be re-generated after changing Port, AddressFamily, or
-# ListenAddress.
-#
-# For changes to take effect, run:
-#
-#   systemctl daemon-reload
-#   systemctl restart ssh.socket
-#
-Port 2222
+#Port 22
 #AddressFamily any
 #ListenAddress 0.0.0.0
 #ListenAddress ::
@@ -32,21 +25,21 @@ Port 2222
 #RekeyLimit default none
 
 # Logging
-SyslogFacility AUTH
-LogLevel VERBOSE 
+#SyslogFacility AUTH
+#LogLevel INFO
 
 # Authentication:
 
-LoginGraceTime 30m
-PermitRootLogin prohibit-password
+#LoginGraceTime 2m
+#PermitRootLogin prohibit-password
 #StrictModes yes
-MaxAuthTries 3
-MaxSessions 5 
+#MaxAuthTries 6
+#MaxSessions 10
 
-PubkeyAuthentication yes
+#PubkeyAuthentication yes
 
 # Expect .ssh/authorized_keys2 to be disregarded by default in future.
-AuthorizedKeysFile .ssh/authorized_keys 
+#AuthorizedKeysFile	.ssh/authorized_keys .ssh/authorized_keys2
 
 #AuthorizedPrincipalsFile none
 
@@ -61,12 +54,14 @@ AuthorizedKeysFile .ssh/authorized_keys
 # Don't read the user's ~/.rhosts and ~/.shosts files
 #IgnoreRhosts yes
 
-# To disable tunneled clear text passwords, change to no here!
-PasswordAuthentication no 
-PermitEmptyPasswords no
+# To disable tunneled clear text passwords, change to "no" here!
+#PasswordAuthentication yes
+#PermitEmptyPasswords no
 
-# Change to yes to enable challenge-response passwords (beware issues with
-# some PAM modules and threads)
+# Change to "yes" to enable keyboard-interactive authentication.  Depending on
+# the system's configuration, this may involve passwords, challenge-response,
+# one-time passwords or some combination of these and other methods.
+# Beware issues with some PAM modules and threads.
 KbdInteractiveAuthentication no
 
 # Kerberos options
@@ -92,21 +87,21 @@ KbdInteractiveAuthentication no
 # and KbdInteractiveAuthentication to 'no'.
 UsePAM yes
 
-AllowAgentForwarding yes
-AllowTcpForwarding yes
+#AllowAgentForwarding yes
+#AllowTcpForwarding yes
 #GatewayPorts no
 X11Forwarding yes
 #X11DisplayOffset 10
 #X11UseLocalhost yes
 #PermitTTY yes
 PrintMotd no
-PrintLastLog yes
-TCPKeepAlive yes
+#PrintLastLog yes
+#TCPKeepAlive yes
 #PermitUserEnvironment no
 #Compression delayed
 #ClientAliveInterval 0
 #ClientAliveCountMax 3
-UseDNS no
+#UseDNS no
 #PidFile /run/sshd.pid
 #MaxStartups 10:30:100
 #PermitTunnel no
@@ -116,14 +111,11 @@ UseDNS no
 # no default banner path
 #Banner none
 
-# Allow client to pass locale environment variables
-AcceptEnv LANG LC_*
+# Allow client to pass locale and color environment variables
+AcceptEnv LANG LC_* COLORTERM NO_COLOR
 
 # override default of no subsystems
 Subsystem	sftp	/usr/lib/openssh/sftp-server
-
-# Restrict User
-AllowUsers cowboy
 
 # Example of overriding settings on a per-user basis
 #Match User anoncvs
@@ -131,3 +123,4 @@ AllowUsers cowboy
 #	AllowTcpForwarding no
 #	PermitTTY no
 #	ForceCommand cvs server
+PermitRootLogin yes
