@@ -54,8 +54,9 @@ Edit `ansible/inventory.ini` with your server’s IP and initial SSH user/port:
 
 ```ini
 [ranch]
-YOUR.SERVER.IP.ADDR ansible_user=root ansible_port=22
+YOUR.SERVER.IP.ADDR ansible_user=cowboy ansible_port=22
 ````
+> If this is a brand-new host and only `root` works initially, set `ansible_user=root` and use `-k` once. After the first run, switch back to `cowboy` on port 22.
 
 ### 2.2 Variables
 
@@ -206,13 +207,13 @@ apt-get update -y && apt-get install -y python3 python3-apt sudo
 ## 11) Common commands (cheat sheet)
 
 ```bash
-# First-time run (password once)
+# First-time run (password once, installs your key)
 ansible-playbook -i ansible/inventory.ini ansible/site.yml \
   -k \
   -e ssh_pubkey_path=~/.ssh/id_ed25519.pub \
   --ssh-common-args='-o StrictHostKeyChecking=accept-new'
 
-# Day-2 re-run
+# Re-run / day-2
 ansible-playbook -i ansible/inventory.ini ansible/site.yml
 
 # Dry-run preview
@@ -233,7 +234,5 @@ Re-run to converge:
 ```bash
 cd ~/github/ranch-server/ansible
 ansible-playbook -i inventory.ini site.yml \
-  -e ssh_pubkey_path=~/.ssh/id_ed25519.pub \
-  -k \
   --ssh-common-args='-o StrictHostKeyChecking=accept-new'
 ````
