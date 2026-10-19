@@ -8,14 +8,14 @@ One-command provisioning of a clean **Ubuntu 24.04** or **Debian 12** server wit
 - Containers: **Docker CE** (official Docker APT repo) + Buildx + **Compose v2**, with log rotation.
 - Network: `nc`, `tcpdump`
 - Build chain: `gcc`, `g++`, `build-essential`
-- Updates: full upgrade on the first run, then daily security updates (`unattended-upgrades`).
+- Updates: full upgrade on a fresh server only, then daily security updates (`unattended-upgrades`).
 - Firewall: no host firewall - use your provider's firewall (see 3).
 
 **Optional components** (all on by default; toggle in `vars.yml` or skip with `--skip-tags`)
 
 | Variable | Tag | What |
 |---|---|---|
-| `install_apache` | `apache`, `lets-encrypt` | Apache with HTTPS-by-default + Let's Encrypt (best-effort) |
+| `install_apache` | `apache`, `lets-encrypt` | Apache with HTTPS-by-default + Let's Encrypt (best-effort). `index.html` is an "Under Maintenance" page (`files/maintenance.html`; `apache_maintenance_page: false` to manage it yourself), and the `Server` header / error pages show only `Apache` (no OS or version) |
 | `install_wireguard` | `wireguard` | `wireguard`, `wireguard-tools` |
 | `install_pyenv` | `pyenv` | pyenv `v2.8.10` + CPython `3.14.8` (system-wide, compiled - slow) |
 | `install_wireshark` | `wireshark` | Wireshark + tshark; capture allowed for the `wireshark` group only |
@@ -35,7 +35,7 @@ ranch-server/
    ├─ inventory.example.ini   # copy to inventory.ini (git-ignored)
    ├─ vars.yml                # non-sensitive defaults: user, SSH port, toggles, versions
    ├─ site.yml                # the playbook
-   ├─ files/.bashrc           # same file for root and cowboy (red prompt for root)
+   ├─ files/.bashrc           # same file for root and cowboy (red prompt for root, green for users)
    ├─ templates/              # sshd_config, fail2ban jail
    └─ tests/                  # CI inventory and overrides
 ```
@@ -94,7 +94,8 @@ ansible-playbook site.yml
 The same command works for the first run and every run after it:
 
 1. The bootstrap play probes port **9922**. Closed -> fresh server -> connect as `root` on **22**.
-2. First run only: `apt dist-upgrade`, and a reboot if the upgrade asks for one.
+2. Fresh server only: `apt dist-upgrade`, and a reboot if the upgrade asks for one. Later runs
+   never upgrade or reboot, so re-running cannot take the site or a C2 session down.
 3. Everything is installed and configured. Before moving sshd, the play **checks from your
    laptop that `cowboy` can log in with your key** (`ssh_login_check: false` skips it).
 4. sshd moves to 9922 (on Ubuntu, `ssh.socket` activation is replaced by a plain
@@ -129,7 +130,8 @@ A second run reports `changed=0` (checked in CI).
   Apache through a deploy hook. If it fails (DNS not ready), the play prints certbot's error
   and Apache keeps the snakeoil certificate. Point DNS, then:
   `ansible-playbook site.yml --tags apache,lets-encrypt`
-- HSTS (`max-age=63072000; includeSubDomains`, no `preload`) is sent only with a real certificate.
+- HSTS (`max-age=63072000`, no `includeSubDomains`/`preload`, so `http://` callbacks to
+  subdomains keep working) is sent only with a real certificate.
 
 **Docker** - `/etc/docker/daemon.json` sets log rotation (`docker_log_max_size`,
 `docker_log_max_file`) and `live-restore` (containers survive daemon restarts; not compatible

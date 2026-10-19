@@ -20,8 +20,17 @@ install_wireshark: true   # tags: wireshark
 install_mingw: true       # tags: mingw
 install_fail2ban: true    # tags: fail2ban
 
+# ---------- Apache (tags: apache) ----------
+# Serve files/maintenance.html as /var/www/html/index.html instead of Ubuntu's
+# default page. Set false to manage index.html yourself (the playbook would
+# otherwise overwrite it on every run).
+apache_maintenance_page: true
+
 # ---------- Updates (tags: updates) ----------
-# First run only: apt dist-upgrade, then reboot if the upgrade asks for it.
+# Fresh server only (bootstrap connects as root@22): apt dist-upgrade, then
+# reboot if the upgrade asks for it. Later runs never upgrade or reboot, so a
+# re-run cannot take the site or a C2 session down; unattended-upgrades covers
+# security fixes.
 first_run_upgrade: true
 first_run_reboot: true
 # Keep unattended-upgrades (security updates) enabled.

@@ -7,13 +7,14 @@
 - name: Bootstrap
   hosts: ranch
   gather_facts: false
-  become: true
   vars_files:
     - vars.yml
   tasks:
+    # delegate_to: localhost makes ansible_host point at localhost, so the
+    # server's address is read from hostvars.
     - name: Probe the SSH port from your laptop
       ansible.builtin.wait_for:
-        host: "{{ ansible_host | default(inventory_hostname) }}"
+        host: "{{ hostvars[inventory_hostname]['ansible_host'] | default(inventory_hostname) }}"
         port: "{{ ssh_port }}"
         timeout: 5
       delegate_to: localhost
@@ -26,14 +27,19 @@
       ansible.builtin.set_fact:
         ansible_port: "{{ ssh_port if _ssh_port_probe.state | default('') == 'started' else 22 }}"
         ansible_user: "{{ primary_user if _ssh_port_probe.state | default('') == 'started' else 'root' }}"
+        _fresh_server: "{{ _ssh_port_probe.state | default('') != 'started' }}"
       tags: [always]
 
+    # Skips apt-get entirely once Python and python3-apt are there.
     - name: Install Python so Ansible can work
       ansible.builtin.raw: |
+        command -v python3 >/dev/null 2>&1 && dpkg -s python3-apt >/dev/null 2>&1 && exit 0
         export DEBIAN_FRONTEND=noninteractive
         apt-get update -y
         apt-get install -y python3 python3-apt sudo
+      become: "{{ ansible_user != 'root' }}"
       changed_when: false
+      tags: [always]
 
 # =========================
 # 2) Converge server to desired state
@@ -162,16 +168,12 @@
       tags: [hostname]
 
     # ---------- UPDATES ----------
-    - name: Check whether the first-run upgrade already happened
-      ansible.builtin.stat:
-        path: /var/lib/ranch-server/first-run-upgrade.done
-      register: first_run_upgrade_done
-      tags: [updates]
-
-    - name: First run - full upgrade and optional reboot
+    # Fresh server only (bootstrap fell back to root@22): a later run never
+    # upgrades or reboots a server that may be serving the site or a C2 session.
+    - name: Fresh server - full upgrade and optional reboot
       when:
         - first_run_upgrade | bool
-        - not first_run_upgrade_done.stat.exists
+        - _fresh_server | bool
       tags: [updates]
       block:
         - name: Upgrade all packages (apt dist-upgrade)
@@ -190,18 +192,6 @@
           when:
             - first_run_reboot | bool
             - reboot_required.stat.exists
-
-        - name: Create /var/lib/ranch-server
-          ansible.builtin.file:
-            path: /var/lib/ranch-server
-            state: directory
-            mode: "0755"
-
-        - name: Remember that the first-run upgrade is done
-          ansible.builtin.copy:
-            dest: /var/lib/ranch-server/first-run-upgrade.done
-            content: "{{ ansible_facts.date_time.iso8601 }}\n"
-            mode: "0644"
 
     - name: Install unattended-upgrades
       ansible.builtin.apt:
@@ -270,6 +260,7 @@
       ansible.builtin.apt:
         state: present
         name:
+          - acl  # lets Ansible run tasks as an unprivileged user (become_user)
           - netcat-openbsd
           - tcpdump
           - openssh-server
@@ -582,7 +573,9 @@
           register: le_cert
           tags: [apache, lets-encrypt]
 
-        # HSTS only with a real certificate, and without "preload".
+        # HSTS only with a real certificate. No includeSubDomains/preload: a
+        # browser would otherwise upgrade http:// callbacks to subdomains to
+        # https://, fail on the certificate name and never reach Apache.
         - name: Default SSL vhost
           ansible.builtin.copy:
             dest: /etc/apache2/sites-available/default-ssl.conf
@@ -601,7 +594,7 @@
                     AllowOverride All
                   </Directory>
               {% if le_cert.stat.exists %}
-                  Header always set Strict-Transport-Security "max-age=63072000; includeSubDomains"
+                  Header always set Strict-Transport-Security "max-age=63072000"
               {% endif %}
                 </VirtualHost>
               </IfModule>
@@ -612,6 +605,33 @@
           ansible.builtin.command: a2ensite default-ssl
           args:
             creates: /etc/apache2/sites-enabled/default-ssl.conf
+          notify: Reload Apache
+          tags: [apache]
+
+        # Replaces Ubuntu's "Apache2 Default Page", which advertises the OS and
+        # web server to anyone who opens the domain.
+        - name: Serve the "Under Maintenance" page as index.html
+          ansible.builtin.copy:
+            src: files/maintenance.html
+            dest: /var/www/html/index.html
+            owner: root
+            group: root
+            mode: "0644"
+          when: apache_maintenance_page | bool
+          tags: [apache]
+
+        # Ubuntu ships "ServerTokens OS" / "ServerSignature On", which put
+        # "Apache/2.4.x (Ubuntu)" in every response header and error page.
+        - name: Hide the OS and Apache version (Server header, error pages)
+          ansible.builtin.lineinfile:
+            path: /etc/apache2/conf-available/security.conf
+            regexp: "^{{ item.key }}\\s"
+            line: "{{ item.key }} {{ item.value }}"
+          loop:
+            - { key: ServerTokens, value: Prod }
+            - { key: ServerSignature, value: "Off" }
+          loop_control:
+            label: "{{ item.key }} {{ item.value }}"
           notify: Reload Apache
           tags: [apache]
 
@@ -679,8 +699,14 @@
     - name: Check that your key opens a session as {{ primary_user }}
       ansible.builtin.command: >-
         ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new
-        {{ ('-i ' ~ ansible_ssh_private_key_file) if ansible_ssh_private_key_file is defined else '' }}
-        -p {{ ansible_port }} {{ primary_user }}@{{ ansible_host | default(inventory_hostname) }} true
+        {{ ('-i ' ~ _key) if _key | length > 0 else '' }}
+        -p {{ _port }} {{ primary_user }}@{{ _target }} true
+      vars:
+        # delegate_to: localhost makes ansible_host/ansible_port point at
+        # localhost, so read the server's values from hostvars instead.
+        _target: "{{ hostvars[inventory_hostname]['ansible_host'] | default(inventory_hostname) }}"
+        _port: "{{ hostvars[inventory_hostname]['ansible_port'] }}"
+        _key: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] | default('') }}"
       delegate_to: localhost
       become: false
       changed_when: false
@@ -734,6 +760,28 @@
 
     - name: Apply pending changes now (SSH restart included)
       ansible.builtin.meta: flush_handlers
+
+    # Ubuntu: when the openssh-server upgrade restarts sshd under ssh.socket,
+    # that sshd keeps listening on 22 and ssh.service no longer tracks it, so
+    # the restart above leaves it running. Stop every sshd listener that is
+    # neither on ssh_port nor ssh.service's main process; open sessions are
+    # separate processes and stay up.
+    - name: Stop leftover sshd listeners on other ports (socket-activation leftovers)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        main=$(systemctl show -p MainPID --value ssh)
+        pids=$(ss -Hltnp \
+          | awk -v p=":{{ ssh_port }}$" '$4 !~ p' \
+          | grep -o '"sshd",pid=[0-9]*' | cut -d= -f2 | sort -u \
+          | grep -vx "$main" || true)
+        [ -z "$pids" ] && exit 0
+        kill $pids
+        echo "killed $pids"
+      args:
+        executable: /bin/bash
+      register: stray_sshd
+      changed_when: "'killed' in stray_sshd.stdout"
+      tags: [ssh]
 
     - name: Reconnect on ssh_port as {{ primary_user }}
       ansible.builtin.set_fact:
