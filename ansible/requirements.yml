@@ -1,0 +1,4 @@
+---
+# Only needed with ansible-core; the full "ansible" package already ships it.
+collections:
+  - name: ansible.posix

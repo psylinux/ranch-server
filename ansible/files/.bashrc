@@ -38,9 +38,12 @@ else
     color_prompt=
 fi
 
-if [ "$color_prompt" = yes ]; then
+if [ "$color_prompt" = yes ] && [ "$(id -u)" -eq 0 ]; then
     # root:  attr 0, FG 37 (white), BG 41 (red)
     PS1='${debian_chroot:+($debian_chroot)}\[\e[0;37;41m\]\u\[\e[0m\]\[\e[01;31m\]@\h\[\e[0m\]:\[\e[01;33m\]\w\[\e[0m\]\$ '
+elif [ "$color_prompt" = yes ]; then
+    # users: attr 0, FG 37 (white), BG 42 (green)
+    PS1='${debian_chroot:+($debian_chroot)}\[\e[0;37;42m\]\u\[\e[0m\]\[\e[01;32m\]@\h\[\e[0m\]:\[\e[01;33m\]\w\[\e[0m\]\$ '
 else
     PS1='${debian_chroot:+($debian_chroot)}\u@\h:\w\$ '
 fi
@@ -83,4 +86,13 @@ if ! shopt -oq posix; then
   elif [ -f /etc/bash_completion ]; then
     . /etc/bash_completion
   fi
+fi
+
+# Your own snippets go in ~/.bashrc.d/*.sh: this file is managed by Ansible and
+# is overwritten on every run, the snippets are not.
+if [ -d ~/.bashrc.d ]; then
+  for rc in ~/.bashrc.d/*.sh; do
+    [ -r "$rc" ] && . "$rc"
+  done
+  unset rc
 fi

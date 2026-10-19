@@ -1,0 +1,5 @@
+---
+# Long lines are file contents (Docker APT source, SSL cert paths) that cannot wrap.
+warn_list:
+  - yaml[line-length]
+  - jinja[spacing]

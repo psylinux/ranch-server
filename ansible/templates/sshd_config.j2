@@ -1,3 +1,6 @@
+# Managed by Ansible (ranch-server/ansible/templates/sshd_config.j2).
+# Local edits will be overwritten on the next run.
+#
 # This is the sshd server system-wide configuration file.  See
 # sshd_config(5) for more information.
 
@@ -8,18 +11,15 @@
 # possible, but leave them commented.  Uncommented options override the
 # default value.
 
-Include /etc/ssh/sshd_config.d/*.conf
+# NOTE: sshd keeps the FIRST value it reads for each option. The drop-ins in
+# /etc/ssh/sshd_config.d/ are included at the END of this file so that a
+# cloud-init drop-in (e.g. "PasswordAuthentication yes") cannot override the
+# settings below.
 
-# When systemd socket activation is used (the default), the socket
-# configuration must be re-generated after changing Port, AddressFamily, or
-# ListenAddress.
-#
-# For changes to take effect, run:
-#
-#   systemctl daemon-reload
-#   systemctl restart ssh.socket
-#
-Port 2222
+# The playbook disables systemd socket activation (ssh.socket) on Ubuntu, so
+# sshd reads Port directly from this file. The value comes from ssh_port in
+# vars.yml -- change it there, never here.
+Port {{ ssh_port }}
 #AddressFamily any
 #ListenAddress 0.0.0.0
 #ListenAddress ::
@@ -29,7 +29,7 @@ Port 2222
 
 # Logging
 SyslogFacility AUTH
-LogLevel VERBOSE 
+LogLevel VERBOSE
 
 # Authentication:
 
@@ -37,12 +37,12 @@ LoginGraceTime 30m
 PermitRootLogin prohibit-password
 #StrictModes yes
 MaxAuthTries 3
-MaxSessions 5 
+MaxSessions 5
 
 PubkeyAuthentication yes
 
 # Expect .ssh/authorized_keys2 to be disregarded by default in future.
-AuthorizedKeysFile .ssh/authorized_keys 
+AuthorizedKeysFile .ssh/authorized_keys
 
 #AuthorizedPrincipalsFile none
 
@@ -58,7 +58,7 @@ AuthorizedKeysFile .ssh/authorized_keys
 IgnoreRhosts yes
 
 # To disable tunneled clear text passwords, change to no here!
-PasswordAuthentication no 
+PasswordAuthentication no
 PermitEmptyPasswords no
 
 # Change to yes to enable challenge-response passwords (beware issues with
@@ -117,3 +117,6 @@ AcceptEnv LANG LC_*
 
 # override default of no subsystems
 Subsystem	sftp	/usr/lib/openssh/sftp-server
+
+# Drop-ins last: they can add options, but cannot override the ones above.
+Include /etc/ssh/sshd_config.d/*.conf

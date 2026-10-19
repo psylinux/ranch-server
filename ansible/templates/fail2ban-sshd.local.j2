@@ -1,0 +1,8 @@
+# Managed by Ansible (ranch-server/ansible/templates/fail2ban-sshd.local.j2).
+[sshd]
+enabled  = true
+port     = {{ ssh_port }}
+backend  = systemd
+maxretry = {{ fail2ban_maxretry }}
+findtime = {{ fail2ban_findtime }}
+bantime  = {{ fail2ban_bantime }}

@@ -1,0 +1,4 @@
+---
+# Overrides for the container test (see .github/workflows/ci.yml).
+ssh_login_check: false   # no SSH from a laptop: the play runs inside the target
+first_run_reboot: false  # a container cannot reboot

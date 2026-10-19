@@ -1,2 +1,7 @@
 # Ignore patch files
 *.patch
+
+# Local-only: inventory (IPs, domains, e-mail, SSH key).
+# Template: ansible/inventory.example.ini
+ansible/inventory.ini
+*.retry

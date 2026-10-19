@@ -1,0 +1,65 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ansible
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ansible ansible-lint
+      - run: ansible-playbook -i tests/inventory.ci.ini site.yml --syntax-check
+      - run: ansible-lint site.yml
+
+  # Runs the whole playbook twice inside an Ubuntu 24.04 container that boots
+  # systemd: the first run must succeed, the second must change nothing.
+  converge:
+    needs: lint
+    runs-on: ubuntu-24.04
+    env:
+      # hostname: Docker owns the container's hostname and /etc/hosts.
+      # pyenv: compiling CPython takes ~10 minutes on a runner.
+      SKIP_TAGS: hostname,pyenv
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start the target container
+        run: |
+          docker run -d --name target --privileged --cgroupns=host \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            -v /var/lib/docker \
+            -v "$PWD":/repo:ro \
+            geerlingguy/docker-ubuntu2404-ansible:latest
+          docker exec target ansible --version
+
+      - name: First run
+        run: |
+          docker exec target bash -c "cd /repo/ansible && \
+            ansible-playbook -i tests/inventory.ci.ini -e @tests/ci-vars.yml \
+            --skip-tags $SKIP_TAGS site.yml"
+
+      - name: Second run changes nothing
+        run: |
+          docker exec target bash -c "cd /repo/ansible && \
+            ansible-playbook -i tests/inventory.ci.ini -e @tests/ci-vars.yml \
+            --skip-tags $SKIP_TAGS site.yml" | tee run2.log
+          grep -E '^localhost +: .*changed=0 .*failed=0' run2.log
+
+      - name: Check the result
+        run: |
+          docker exec target bash -c '
+            set -e
+            sshd -T | grep -E "^port 9922$"
+            systemctl is-active ssh docker apache2 fail2ban
+            id cowboy
+            docker info --format "{{.LoggingDriver}}"
+            cat /etc/docker/daemon.json
+          '
